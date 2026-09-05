@@ -1,0 +1,916 @@
+You are working on my existing GitHub repository:
+
+https://github.com/akhilvnarayanan/my-photos
+
+This is a self-hosted, privacy-first Google Photos–style application called "My Photos".
+
+IMPORTANT:
+Do NOT rebuild the application from scratch.
+Do NOT replace the existing architecture.
+Do NOT remove or break any existing functionality.
+
+First inspect the complete repository and understand the existing architecture, database schema, API, frontend, import system, Docker configuration and current Git branches.
+
+==================================================
+1. CURRENT APPLICATION
+==================================================
+
+The application currently provides functionality including:
+
+- Local username/password authentication
+- Photo and video library
+- Timeline
+- Photo viewer
+- Video playback
+- Favorites
+- Albums
+- Places
+- Archive
+- Trash
+- Import archive
+- Browser upload
+- Google Takeout/local folder import
+- EXIF metadata extraction
+- GPS metadata
+- Duplicate detection
+- SHA-256 hashing
+- Thumbnail generation
+- Import pause/resume/cancel/retry
+- Import recovery after restart
+- PostgreSQL + Drizzle
+- Express API
+- React + Vite frontend
+- Docker Compose deployment
+
+Existing functionality must remain working.
+
+==================================================
+2. ARCHITECTURE
+==================================================
+
+Preserve the current architecture:
+
+React/Vite
+    ↓
+Express API
+    ↓
+PostgreSQL / Drizzle
+    ↓
+Background processing
+    ↓
+Local AI worker
+
+Do not introduce unnecessary cloud services.
+
+The AI functionality must be designed to run locally on my own server.
+
+Privacy requirement:
+
+ORIGINAL PHOTOS MUST NEVER BE UPLOADED TO EXTERNAL AI SERVICES.
+
+==================================================
+3. FIRST TASK — ANALYZE THE REPOSITORY
+==================================================
+
+Before modifying code:
+
+1. Inspect the repository structure.
+2. Identify:
+   - frontend entry points
+   - routing
+   - components
+   - API routes
+   - database schema
+   - import system
+   - Docker configuration
+   - generated API client
+   - current AI-related code
+3. Identify existing AI worker implementation.
+4. Identify existing AI database tables.
+5. Identify existing Places implementation.
+6. Identify existing search implementation.
+7. Identify where Settings UI is implemented.
+8. Identify how API client types/hooks are generated.
+9. Identify build and deployment commands.
+
+Create an internal implementation plan based on the actual repository.
+
+Do NOT blindly overwrite large files.
+
+==================================================
+4. AI PROCESSING DASHBOARD
+==================================================
+
+Implement a new:
+
+Settings → AI Processing
+
+section.
+
+Display:
+
+- AI processing enabled/disabled
+- Worker status
+- Total jobs
+- Queued
+- Processing
+- Completed
+- Failed
+- Overall progress
+- Last processed item
+- Current model/version
+- Processing errors
+
+Add:
+
+[ Process Existing Photos ]
+
+[ Retry Failed ]
+
+[ Pause Processing ]
+
+[ Resume Processing ]
+
+The dashboard should automatically refresh while processing is active.
+
+Do not require the user to use a terminal for normal AI operations.
+
+==================================================
+5. AI JOB SYSTEM
+==================================================
+
+Use the existing ai_jobs infrastructure if present.
+
+Make the job system durable and resumable.
+
+Each job should support:
+
+- queued
+- processing
+- completed
+- failed
+
+Include:
+
+- attempts
+- error
+- startedAt
+- completedAt
+- modelVersion
+- requestedFeatures
+
+Jobs must survive API/worker restarts.
+
+Do not process the same feature repeatedly if it has already completed successfully.
+
+Prevent race conditions when multiple workers are running.
+
+Design the system so different AI features can be processed independently:
+
+OCR
+Places
+Object detection
+Face detection
+Scene recognition
+
+Do not make one giant job that prevents individual features from being retried.
+
+==================================================
+6. LOCAL OCR
+==================================================
+
+Implement local OCR first.
+
+Use Tesseract OCR or another suitable fully local OCR engine.
+
+For each supported image:
+
+1. Load the local photo.
+2. Run OCR locally.
+3. Store detected text in photo_text.
+4. Store confidence when available.
+5. Store language when available.
+6. Mark OCR processing completed.
+
+Skip videos initially.
+
+Do not send images to Google, OpenAI, Gemini or any other external service.
+
+Search must eventually support:
+
+passport
+invoice
+document
+ticket
+receipt
+name
+address
+etc.
+
+Example:
+
+User searches:
+
+"passport"
+
+The application should find photos whose OCR text contains "passport".
+
+==================================================
+7. PLACES / GPS
+==================================================
+
+Use existing EXIF GPS information.
+
+Create/enrich Places using:
+
+- latitude
+- longitude
+- country
+- state
+- district
+- city
+- landmark
+
+Avoid silently sending the complete photo library to an external geocoding service.
+
+Design place enrichment so that it can later support:
+
+- local/offline geocoder
+- optional user-enabled external geocoder
+
+Existing Places functionality must remain compatible.
+
+Improve place grouping so that photos taken near each other can belong to the same place instead of requiring exact identical coordinates.
+
+==================================================
+8. PEOPLE / FACE DETECTION
+==================================================
+
+Implement local face DETECTION.
+
+IMPORTANT SAFETY REQUIREMENT:
+
+Do NOT implement automatic biometric identity matching.
+
+Do NOT claim:
+
+"This face is Akhil"
+
+based on an automatically generated biometric identity.
+
+Instead:
+
+1. Detect faces locally.
+2. Store face bounding boxes.
+3. Create anonymous/user-managed face groups.
+4. Allow the user to assign a label/name manually.
+5. Allow rename.
+6. Allow merge groups.
+7. Allow remove/unassign a face.
+8. Allow searching by a manually assigned group/name.
+
+Example:
+
+Person Group 1
+Person Group 2
+Person Group 3
+
+User can rename:
+
+Person Group 1 → Akhil
+
+After the user manually labels the group, searching:
+
+"Akhil"
+
+can return photos associated with that user-managed group.
+
+Do NOT implement automatic identity recognition.
+
+Do not use face embeddings for automatic identification.
+
+==================================================
+9. PEOPLE UI
+==================================================
+
+Add a primary navigation section:
+
+People
+
+Display:
+
+- face-group cover
+- name
+- photo count
+
+Example:
+
+People
+
+[Akhil]
+128 photos
+
+[Family]
+94 photos
+
+[Unknown]
+37 photos
+
+Allow:
+
+- Rename
+- Merge
+- Remove label
+- View all photos
+- Set cover photo
+
+Keep the UI consistent with the existing application design.
+
+==================================================
+10. OBJECT DETECTION
+==================================================
+
+Implement local object detection using an appropriate local model such as YOLO/ONNX Runtime.
+
+Do not force Python/large ML dependencies into the existing API if a separate worker is cleaner.
+
+Prefer:
+
+Express API
++
+Dedicated AI worker
+
+Store recognized objects as tags.
+
+Examples:
+
+car
+dog
+cat
+person
+food
+phone
+laptop
+building
+tree
+mountain
+beach
+boat
+airplane
+document
+
+Use:
+
+ai_tags
+photo_tags
+
+where appropriate.
+
+Store confidence scores.
+
+==================================================
+11. SCENE / IMAGE UNDERSTANDING
+==================================================
+
+Add optional local image understanding.
+
+The architecture should allow a local vision model such as Ollama-compatible vision models.
+
+Possible classifications:
+
+birthday
+wedding
+travel
+family
+nature
+beach
+mountain
+festival
+food
+sports
+vehicle
+document
+city
+home
+
+This must remain optional.
+
+If the local vision model is unavailable, the application must continue working normally.
+
+==================================================
+12. UNIFIED SEARCH
+==================================================
+
+Upgrade the existing search system.
+
+Search should eventually combine:
+
+- filename
+- description
+- date
+- year
+- month
+- GPS
+- Places
+- Albums
+- OCR text
+- object tags
+- scene tags
+- manually labelled People
+- camera metadata
+
+Support searches such as:
+
+"photos from Singapore"
+
+"beach photos"
+
+"birthday photos"
+
+"photos containing passport"
+
+"Akhil"
+
+"Akhil at the beach"
+
+"family photos from 2025"
+
+"photos from Kerala in 2024"
+
+Do not pretend natural-language search works until the corresponding backend data exists.
+
+Implement structured search first, then natural-language query parsing.
+
+==================================================
+13. MEMORIES
+==================================================
+
+Add:
+
+Memories
+
+Use existing metadata to create useful groupings based on:
+
+- dates
+- locations
+- albums
+- people groups
+- events
+- trips
+
+Examples:
+
+Singapore Trip
+Birthday 2025
+Onam 2025
+Kerala Trip
+Family Weekend
+
+Do not create random memories.
+
+Use confidence/scoring rules and allow the user to dismiss memories later.
+
+==================================================
+14. TIMELINE IMPROVEMENTS
+==================================================
+
+Improve the existing timeline.
+
+Support:
+
+Year
+Month
+Day
+Event
+Trip
+Place
+People
+
+Make sure pagination works correctly.
+
+Do not restrict the library to only the first 100 photos.
+
+Use the existing cursor pagination infrastructure.
+
+==================================================
+15. AI SETTINGS
+==================================================
+
+Create an AI settings area containing:
+
+AI Processing:
+[ON/OFF]
+
+OCR:
+[ON/OFF]
+
+Object Detection:
+[ON/OFF]
+
+Face Detection:
+[ON/OFF]
+
+Scene Recognition:
+[ON/OFF]
+
+Maximum AI concurrency:
+[1]
+
+Processing priority:
+Normal / Low
+
+CPU/GPU:
+Auto / CPU / GPU where supported
+
+Vision model:
+<select local model>
+
+OCR language:
+<select language>
+
+Worker status:
+
+Running
+Stopped
+Unavailable
+
+All settings must be persisted.
+
+==================================================
+16. PERFORMANCE
+==================================================
+
+The photo library may contain approximately 190 GB of Google Takeout data.
+
+Design for large libraries.
+
+DO NOT:
+
+- load all photos into memory
+- process everything synchronously inside Express
+- repeatedly hash unchanged files
+- repeatedly analyze already processed photos
+- block API requests during AI processing
+
+Use:
+
+background workers
+job queues
+pagination
+batch processing
+incremental processing
+retry logic
+persistent state
+
+Allow processing to resume after:
+
+- server restart
+- Docker restart
+- worker crash
+
+==================================================
+17. IMPORT INTEGRATION
+==================================================
+
+When a new photo is imported:
+
+Import
+ ↓
+Save metadata
+ ↓
+Create AI jobs
+ ↓
+AI worker processes asynchronously
+
+The import operation must NOT wait for AI processing.
+
+The user should immediately see the photo in the library.
+
+AI processing happens in the background.
+
+==================================================
+18. VIDEO HANDLING
+==================================================
+
+Preserve the existing working video playback.
+
+Do not break:
+
+- video MIME types
+- range requests
+- video viewer
+- thumbnails
+- existing imported videos
+
+AI processing should initially skip videos unless a specific processor supports them.
+
+==================================================
+19. DOCKER
+==================================================
+
+Maintain Docker Compose compatibility.
+
+Preferred services:
+
+postgres
+api
+web
+ai-worker
+
+The AI worker should have access to:
+
+- PostgreSQL
+- photo storage
+- required local AI models
+
+Do not expose AI services publicly.
+
+Do not require Docker Desktop if the existing project already supports Docker Engine under WSL.
+
+==================================================
+20. DATABASE
+==================================================
+
+Use Drizzle.
+
+Review the existing AI schema before changing it.
+
+Potential entities include:
+
+people
+photo_faces
+ai_tags
+photo_tags
+photo_text
+places
+photo_places
+ai_jobs
+ai_settings
+
+Add appropriate:
+
+indexes
+unique constraints
+foreign-key relationships where appropriate
+
+Do not store unnecessary biometric identity information.
+
+Do not store automatic identity claims.
+
+==================================================
+21. SECURITY
+==================================================
+
+Maintain the existing authentication system.
+
+Every AI endpoint must respect the current authenticated user.
+
+A user must never be able to access another user's:
+
+photos
+OCR text
+AI tags
+face groups
+Places
+AI jobs
+settings
+
+Do not expose internal filesystem paths through public APIs.
+
+==================================================
+22. UI DESIGN
+==================================================
+
+Keep the current visual design.
+
+Do not replace the UI framework.
+
+Use the existing:
+
+- components
+- buttons
+- cards
+- dialogs
+- typography
+- colors
+- spacing
+- icons
+
+Primary navigation should evolve toward:
+
+Photos
+People
+Places
+Albums
+Memories
+Search
+
+Secondary tools:
+
+Favorites
+Archive
+Trash
+Import
+Upload
+Settings
+
+Do not remove existing navigation functionality.
+
+==================================================
+23. IMPLEMENTATION ORDER
+==================================================
+
+Implement in this exact order:
+
+PHASE 1
+AI job infrastructure
+AI Processing dashboard
+Worker status
+Backfill existing photos
+
+PHASE 2
+Local OCR
+OCR storage
+OCR search
+
+PHASE 3
+GPS/Places enrichment
+Improved place clustering
+Places UI
+
+PHASE 4
+Local face detection
+Anonymous face groups
+People UI
+Manual naming
+Merge/rename/remove
+
+PHASE 5
+Local object detection
+AI tags
+Object search
+
+PHASE 6
+Local scene/image understanding
+
+PHASE 7
+Unified natural-language search
+
+PHASE 8
+Memories
+
+PHASE 9
+Performance optimization
+Large-library testing
+Recovery testing
+
+==================================================
+24. TESTING REQUIREMENTS
+==================================================
+
+After every phase:
+
+1. Run type checking.
+2. Run frontend build.
+3. Run API build.
+4. Validate database schema.
+5. Validate Docker build.
+6. Verify existing routes.
+7. Verify login.
+8. Verify photo upload.
+9. Verify photo import.
+10. Verify video playback.
+11. Verify albums.
+12. Verify Places.
+13. Verify favorites/archive/trash.
+
+Do not proceed to the next phase if an existing feature is broken.
+
+Add automated tests for:
+
+- AI job claiming
+- retry logic
+- duplicate job prevention
+- OCR persistence
+- search
+- authorization
+- worker recovery
+
+==================================================
+25. GIT WORKFLOW
+==================================================
+
+Work on a dedicated feature branch.
+
+Do not directly modify main.
+
+Use small logical commits.
+
+Suggested commits:
+
+feat: add ai processing dashboard
+feat: add local ocr worker
+feat: add gps place enrichment
+feat: add local face detection groups
+feat: add object detection
+feat: add unified ai search
+feat: add memories
+
+Keep the existing working main branch intact.
+
+==================================================
+26. DOCUMENTATION
+==================================================
+
+Update README/documentation with:
+
+- architecture
+- AI worker setup
+- Docker setup
+- model installation
+- OCR installation
+- object detection installation
+- configuration variables
+- CPU/GPU requirements
+- processing controls
+- privacy architecture
+- troubleshooting
+- backup recommendations
+
+Clearly document which AI models are used and their licenses.
+
+Do not bundle models with restrictive licenses without documenting them.
+
+==================================================
+27. IMPORTANT — DO NOT DO THESE THINGS
+==================================================
+
+DO NOT:
+
+- rebuild the project from scratch
+- remove existing features
+- replace PostgreSQL
+- replace React/Vite
+- replace Express
+- replace the current import system
+- require cloud AI
+- upload private photos externally
+- implement automatic biometric identity recognition
+- automatically claim a detected face belongs to a named person
+- block photo imports while AI runs
+- load the entire 190GB library into RAM
+- make the application dependent on a remote service
+
+==================================================
+28. FINAL ACCEPTANCE CRITERIA
+==================================================
+
+The implementation is considered complete only when:
+
+✓ Existing application works
+✓ Existing photos remain accessible
+✓ Existing videos play
+✓ Existing imports work
+✓ Browser upload works
+✓ Albums work
+✓ Favorites work
+✓ Archive works
+✓ Trash works
+✓ Places work
+✓ AI worker starts
+✓ AI dashboard works
+✓ Existing photos can be queued
+✓ OCR works locally
+✓ OCR results are searchable
+✓ GPS places are processed
+✓ Face detection works locally
+✓ People groups work
+✓ Manual People naming works
+✓ Object detection works
+✓ AI tags are searchable
+✓ Unified search works
+✓ Memories work
+✓ AI processing survives restart
+✓ Failed jobs can be retried
+✓ Processing does not block the API
+✓ No private photos leave the server
+✓ Docker deployment works
+✓ Documentation is updated
+
+MOST IMPORTANT:
+
+Do not simply tell me what code should be written.
+
+Actually inspect the repository and implement the changes.
+
+After each phase, report:
+
+1. What was implemented
+2. Files changed
+3. Database changes
+4. New environment variables
+5. Tests/build results
+6. Any remaining limitations
+7. Git commit SHA
+
+Start by analyzing the repository and producing the implementation plan. Then immediately begin Phase 1 implementation.
