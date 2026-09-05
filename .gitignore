@@ -47,3 +47,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# My Photos runtime storage
+artifacts/api-server/storage/
