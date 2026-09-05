@@ -5,7 +5,6 @@ import photosRouter from "./photos";
 import albumsRouter from "./albums";
 import importsRouter from "./imports";
 import libraryRouter from "./library";
-import aiRouter from "./ai";
 
 const router: IRouter = Router();
 
@@ -15,6 +14,5 @@ router.use(photosRouter);
 router.use(albumsRouter);
 router.use(importsRouter);
 router.use(libraryRouter);
-router.use(aiRouter);
 
 export default router;

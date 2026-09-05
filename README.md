@@ -51,7 +51,6 @@ Open `http://localhost:5173`. Set `MY_PHOTOS_USERNAME` and `MY_PHOTOS_PASSWORD` 
 | `BASE_PATH` | Vite preview path; use `/` for the standalone app |
 | `IMPORT_CONCURRENCY` | Maximum importer workers per job; defaults to 2 and is capped at 8 |
 | `MAX_BROWSER_UPLOAD_BYTES` | Maximum size of one streamed browser upload; defaults to 20 GiB |
-| `AI_WORKER_DISABLED` | Disable the local AI queue monitor; defaults to `false` |
 
 ## Importing Google Takeout
 
