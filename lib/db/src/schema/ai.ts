@@ -83,7 +83,10 @@ export const aiJobsTable = pgTable("ai_jobs", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => ({ uniquePhoto: uniqueIndex("ai_jobs_photo_unique").on(table.photoId), statusIdx: index("ai_jobs_status_idx").on(table.status) }));
+}, (table) => ({
+  uniquePhotoFeature: uniqueIndex("ai_jobs_photo_feature_unique").on(table.photoId, table.requestedFeatures),
+  statusIdx: index("ai_jobs_status_idx").on(table.status),
+}));
 
 export const aiSettingsTable = pgTable("ai_settings", {
   id: text("id").primaryKey(),
@@ -94,7 +97,7 @@ export const aiSettingsTable = pgTable("ai_settings", {
   faceModel: text("face_model"),
   ocrEnabled: boolean("ocr_enabled").notNull().default(true),
   objectDetectionEnabled: boolean("object_detection_enabled").notNull().default(true),
-  faceRecognitionEnabled: boolean("face_recognition_enabled").notNull().default(true),
+  faceDetectionEnabled: boolean("face_detection_enabled").notNull().default(true),
   maxConcurrency: integer("max_concurrency").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({ uniqueUser: uniqueIndex("ai_settings_user_unique").on(table.userId) }));
