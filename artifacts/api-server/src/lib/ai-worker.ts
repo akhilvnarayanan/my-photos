@@ -1,20 +1,31 @@
 import { claimNextAiJob, completeAiJob, failAiJob } from "./ai-jobs";
+import { processOcrJob } from "./ai-ocr";
 
 const POLL_MS = Number(process.env.AI_WORKER_POLL_MS ?? 2000);
-const MODEL_VERSION = process.env.AI_MODEL_VERSION ?? "foundation-1";
 
-/**
- * Durable worker loop. Feature-specific local models are plugged into processJob
- * in later phases. Keeping the worker independent means imports and browsing do
- * not depend on AI availability.
- */
+function requestedFeatures(value: string) {
+  return new Set(value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
+}
+
 export async function processJob(job: Awaited<ReturnType<typeof claimNextAiJob>>) {
   if (!job) return;
 
-  // Foundation stage: validate the job lifecycle without modifying media.
-  // Later processors will independently populate places, OCR, tags and
-  // user-managed face groups and may report partial results.
-  await completeAiJob(job.id, MODEL_VERSION);
+  const features = requestedFeatures(job.requestedFeatures);
+  const versions: string[] = [];
+
+  if (features.has("ocr") || features.has("all")) {
+    await processOcrJob(job.userId, job.photoId);
+    versions.push("ocr-v1");
+  }
+
+  // Object detection, places enrichment and anonymous face detection are added
+  // as independent processors. Keeping feature selection explicit prevents one
+  // processor from pretending that the other analyses have already run.
+  if (versions.length === 0) {
+    throw new Error(`Unsupported AI features: ${job.requestedFeatures}`);
+  }
+
+  await completeAiJob(job.id, versions.join("+"));
 }
 
 export async function runAiWorker(signal?: AbortSignal) {
