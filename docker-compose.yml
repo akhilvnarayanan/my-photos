@@ -36,6 +36,24 @@ services:
       timeout: 5s
       retries: 5
 
+  ai-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      PHOTO_STORAGE_PATH: /photos
+      AI_WORKER_POLL_MS: ${AI_WORKER_POLL_MS:-2000}
+      AI_OCR_LANGUAGE: ${AI_OCR_LANGUAGE:-eng}
+      AI_OCR_TIMEOUT_MS: ${AI_OCR_TIMEOUT_MS:-120000}
+    volumes:
+      - ${PHOTO_STORAGE_HOST_PATH:?Set PHOTO_STORAGE_HOST_PATH in .env}:/photos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "-c", "pnpm --filter @workspace/db run push && pnpm --filter @workspace/api-server run build && node artifacts/api-server/dist/ai-worker-entry.mjs"]
+    restart: unless-stopped
+
   web:
     build:
       context: .
