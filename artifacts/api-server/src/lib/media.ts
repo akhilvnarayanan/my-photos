@@ -2,12 +2,40 @@ import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { db, albumPhotosTable, assetSourcesTable, photosTable } from "@workspace/db";
 
-export const storageRoot = path.resolve(process.env.PHOTO_STORAGE_PATH ?? path.resolve(process.cwd(), "storage"));
+export const storageRoot = path.resolve(
+  process.env.PHOTO_STORAGE_PATH ?? path.resolve(process.cwd(), "storage")
+);
+
+export function mimeTypeForFile(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+
+  const mimeTypes: Record<string, string> = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".ogv": "video/ogg",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+    ".3gp": "video/3gpp",
+    ".3g2": "video/3gpp2",
+    ".mpeg": "video/mpeg",
+    ".mpg": "video/mpeg",
+  };
+
+  return mimeTypes[extension] ?? "application/octet-stream";
+}
 
 export function isManagedPath(filePath: string) {
   const resolved = path.resolve(filePath);
   const relative = path.relative(storageRoot, resolved);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
 }
 
 type SourceResponse = {
@@ -22,6 +50,7 @@ export function mediaResponse(
   sources: SourceResponse[] = [],
 ) {
   const base = `/api/photos/${photo.id}`;
+
   return {
     id: photo.id,
     filename: photo.filename,
@@ -54,33 +83,62 @@ export function mediaResponse(
 
 export async function albumIdsForPhotos(photoIds: string[]) {
   if (!photoIds.length) return new Map<string, string[]>();
-  const rows = await db.select().from(albumPhotosTable).where(inArray(albumPhotosTable.photoId, photoIds));
+
+  const rows = await db
+    .select()
+    .from(albumPhotosTable)
+    .where(inArray(albumPhotosTable.photoId, photoIds));
+
   const result = new Map<string, string[]>();
-  for (const row of rows) result.set(row.photoId, [...(result.get(row.photoId) ?? []), row.albumId]);
+
+  for (const row of rows) {
+    result.set(row.photoId, [
+      ...(result.get(row.photoId) ?? []),
+      row.albumId,
+    ]);
+  }
+
   return result;
 }
 
 export async function albumIdsForPhoto(photoId: string) {
-  const rows = await db.select({ albumId: albumPhotosTable.albumId }).from(albumPhotosTable).where(eq(albumPhotosTable.photoId, photoId));
+  const rows = await db
+    .select({ albumId: albumPhotosTable.albumId })
+    .from(albumPhotosTable)
+    .where(eq(albumPhotosTable.photoId, photoId));
+
   return rows.map((row) => row.albumId);
 }
 
 export async function sourceInfoForPhotos(photoIds: string[]) {
-  if (!photoIds.length) return new Map<string, SourceResponse[]>();
-  const rows = await db.select({
-    assetId: assetSourcesTable.assetId,
-    sourceType: assetSourcesTable.sourceType,
-    sourceFilename: assetSourcesTable.sourceFilename,
-    importedAt: assetSourcesTable.importedAt,
-  }).from(assetSourcesTable).where(inArray(assetSourcesTable.assetId, photoIds));
-  const result = new Map<string, SourceResponse[]>();
-  for (const row of rows) {
-    result.set(row.assetId, [...(result.get(row.assetId) ?? []), row]);
+  if (!photoIds.length) {
+    return new Map<string, SourceResponse[]>();
   }
+
+  const rows = await db
+    .select({
+      assetId: assetSourcesTable.assetId,
+      sourceType: assetSourcesTable.sourceType,
+      sourceFilename: assetSourcesTable.sourceFilename,
+      importedAt: assetSourcesTable.importedAt,
+    })
+    .from(assetSourcesTable)
+    .where(inArray(assetSourcesTable.assetId, photoIds));
+
+  const result = new Map<string, SourceResponse[]>();
+
+  for (const row of rows) {
+    result.set(row.assetId, [
+      ...(result.get(row.assetId) ?? []),
+      row,
+    ]);
+  }
+
   return result;
 }
 
 export async function sourceInfoForPhoto(photoId: string) {
   const result = await sourceInfoForPhotos([photoId]);
+
   return result.get(photoId) ?? [];
 }

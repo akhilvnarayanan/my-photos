@@ -3,7 +3,15 @@ import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from "drizzle-or
 import { db, albumPhotosTable, assetSourcesTable, photosTable } from "@workspace/db";
 import { DeletePhotoParams, DownloadPhotoParams, GetPhotoParams, ListPhotosQueryParams, ListPhotosResponse, PermanentlyDeletePhotoParams, RestorePhotoParams, RestorePhotoResponse, ToggleArchiveBody, ToggleArchiveParams, ToggleArchiveResponse, ToggleFavoriteBody, ToggleFavoriteParams, ToggleFavoriteResponse } from "@workspace/api-zod";
 import { requireUser } from "../lib/auth";
-import { albumIdsForPhoto, albumIdsForPhotos, isManagedPath, mediaResponse, sourceInfoForPhoto, sourceInfoForPhotos } from "../lib/media";
+import {
+  albumIdsForPhoto,
+  albumIdsForPhotos,
+  isManagedPath,
+  mediaResponse,
+  mimeTypeForFile,
+  sourceInfoForPhoto,
+  sourceInfoForPhotos,
+} from "../lib/media";
 import { promises as fs } from "node:fs";
 
 const router: IRouter = Router();
@@ -115,8 +123,18 @@ router.get("/photos/:photoId/:variant", async (req, res): Promise<void> => {
   }
   try {
     await fs.access(filePath);
-    if (variant === "download") res.download(filePath, photo.filename);
-    else res.sendFile(filePath);
+
+    if (variant === "download") {
+      res.download(filePath, photo.filename);
+      return;
+    }
+
+    if (photo.mediaType === "video") {
+      res.setHeader("Content-Type", mimeTypeForFile(filePath));
+      res.setHeader("Accept-Ranges", "bytes");
+    }
+
+    res.sendFile(filePath);
   } catch {
     res.status(404).json({ error: "Media file not found" });
   }

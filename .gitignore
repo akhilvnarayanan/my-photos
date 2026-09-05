@@ -50,3 +50,4 @@ Thumbs.db
 
 # My Photos runtime storage
 artifacts/api-server/storage/
+.pnpm-store/

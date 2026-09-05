@@ -26,6 +26,7 @@ services:
       IMPORT_CONCURRENCY: ${IMPORT_CONCURRENCY:-2}
     volumes:
       - ${PHOTO_STORAGE_HOST_PATH:?Set PHOTO_STORAGE_HOST_PATH in .env}:/photos
+      - ${PHOTO_IMPORT_HOST_PATH:?Set PHOTO_IMPORT_HOST_PATH in .env}:/imports:ro
     depends_on:
       postgres:
         condition: service_healthy
