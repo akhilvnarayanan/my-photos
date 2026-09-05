@@ -1,0 +1,1377 @@
+PROJECT: My-Photos Library — Production Hardening & Feature Completion
+
+You are taking over the existing "My-Photos Library" application provided in the uploaded ZIP.
+
+IMPORTANT:
+This is an existing application. Do NOT rebuild it from scratch.
+
+First inspect the entire codebase and understand the current implementation. Preserve working functionality, existing UI design, database architecture, authentication, APIs, and storage approach wherever possible.
+
+The application is intended to become a self-hosted Google Photos-style personal photo library.
+
+I already have:
+- Approximately 189.6 GB of Google Photos Takeout data split across multiple ZIP files.
+- A large collection of older photos/videos stored on an HDD.
+- The existing My-Photos Library application.
+
+The final application must combine Google Takeout, old HDD photos, future uploads, and future phone backups into ONE unified photo library.
+
+============================================================
+PRIMARY OBJECTIVE
+============================================================
+
+Do NOT focus on adding AI or mobile features yet.
+
+The immediate objective is to make the existing application production-safe and reliable for importing a very large photo library.
+
+Priority order:
+
+1. Database integrity
+2. Google Takeout importer
+3. HDD/local-folder importer
+4. Global duplicate detection
+5. Import recovery/resume
+6. Album preservation
+7. Metadata preservation
+8. Import performance
+9. Timeline performance
+10. Trash/archive
+11. Search
+12. Browser upload
+13. Production/Docker improvements
+14. Testing/documentation
+
+Do not import my real 189.6 GB library automatically.
+
+============================================================
+STEP 1 — FULL CODEBASE REVIEW
+============================================================
+
+Before modifying anything, inspect:
+
+- frontend
+- backend
+- database schema
+- Drizzle migrations
+- API routes
+- authentication
+- photo storage
+- thumbnail generation
+- importer
+- import jobs
+- albums
+- favorites
+- archive
+- trash
+- places
+- Docker
+- environment configuration
+- README
+- tests
+
+Identify what is already implemented.
+
+Do NOT recreate functionality that already exists.
+
+Make the smallest safe changes necessary.
+
+============================================================
+1. DATABASE INTEGRITY
+============================================================
+
+Review the current PostgreSQL/Drizzle schema.
+
+Do NOT reset or recreate the database.
+
+Create proper migrations.
+
+The most important requirement is database-level duplicate protection.
+
+Photos/assets must have a unique constraint equivalent to:
+
+UNIQUE(user_id, hash)
+
+This prevents race conditions when multiple import workers process the same file simultaneously.
+
+Handle unique constraint conflicts gracefully.
+
+Do not allow two identical assets to be created for the same user.
+
+Also ensure album names cannot race during concurrent creation.
+
+Use an appropriate constraint such as:
+
+UNIQUE(user_id, name)
+
+Use PostgreSQL ON CONFLICT or equivalent safe logic.
+
+Do not rely only on application-level SELECT-then-INSERT logic.
+
+============================================================
+2. UNIFIED ASSET MODEL
+============================================================
+
+All media sources must use the same asset library.
+
+Supported source types:
+
+GOOGLE_TAKEOUT
+EXTERNAL_HDD
+LOCAL_FOLDER
+BROWSER_UPLOAD
+PHONE
+
+Do not create separate libraries.
+
+The architecture should be:
+
+Google Takeout ─┐
+Old HDD ────────┤
+Local Folder ───┤
+Browser Upload ─┤
+Phone ──────────┘
+        ↓
+  Import Engine
+        ↓
+ Hash / Deduplication
+        ↓
+ Unified Assets
+        ↓
+ PostgreSQL + Media Storage
+
+============================================================
+3. ASSET SOURCE TRACKING
+============================================================
+
+Use the existing asset_sources system if present.
+
+Ensure each imported source can be tracked.
+
+Suggested information:
+
+- assetId
+- importJobId
+- sourceType
+- sourcePath
+- sourceFilename
+- sourceHash
+- importedAt
+
+Example:
+
+Asset ABC
+
+Sources:
+- Google Takeout
+- Old HDD
+
+The source HDD must remain untouched.
+
+============================================================
+4. GOOGLE TAKEOUT IMPORTER
+============================================================
+
+Harden the existing Google Takeout importer.
+
+It must support multiple Takeout ZIP parts with repeated folder structures.
+
+Example:
+
+Google Photos/
+  2024/
+    IMG001.jpg
+
+Google Photos/
+  Albums/
+    Family/
+      IMG001.jpg
+
+Google Photos/
+  Albums/
+    Vacation/
+      IMG001.jpg
+
+If the files have the same SHA-256:
+
+Create ONE asset.
+
+Then:
+
+Asset IMG001
+  ├── Timeline
+  ├── Family
+  └── Vacation
+
+Do NOT create three physical photo records.
+
+When a duplicate is found:
+
+1. Find existing asset by hash.
+2. Reuse existing asset.
+3. Add missing album relationships.
+4. Record the source in asset_sources.
+5. Mark import file as duplicate/reused.
+6. Do not copy another original.
+7. Do not unnecessarily regenerate thumbnails.
+
+============================================================
+5. TAKEOUT ALBUM PARSING
+============================================================
+
+Improve the current album parser.
+
+Do not assume that the album is always the immediate folder after "Albums".
+
+Support nested structures.
+
+Example:
+
+Google Photos/
+  Albums/
+    Vacation/
+      Singapore/
+        IMG.jpg
+
+Allow the system to represent:
+
+Vacation
+  └── Singapore
+
+If the existing database does not support nested albums, design a safe extension.
+
+At minimum, preserve the album name and media relationship correctly.
+
+Do not lose album membership because of deduplication.
+
+============================================================
+6. TAKEOUT METADATA
+============================================================
+
+Preserve Google Takeout JSON metadata.
+
+Support:
+
+- title
+- description
+- photoTakenTime
+- creationTime
+- modificationTime
+- geoData
+- geoDataExif
+
+Date priority:
+
+1. Google Takeout photoTakenTime
+2. EXIF DateTimeOriginal
+3. Google Takeout creationTime
+4. Google Takeout modificationTime
+5. Video creation timestamp
+6. Filesystem timestamp
+
+Store:
+
+captureDateSource
+
+Examples:
+
+EXIF
+TAKEOUT
+FILENAME
+FILESYSTEM
+
+GPS priority:
+
+1. Takeout geoData
+2. Takeout geoDataExif
+3. EXIF GPS
+
+============================================================
+7. HDD / LOCAL FOLDER IMPORT
+============================================================
+
+Ensure the application has a complete local folder importer.
+
+The user should be able to select an old HDD directory.
+
+Example:
+
+D:\Old Photos\
+  2008\
+  2009\
+  Family\
+  Vacation\
+  Camera\
+  DCIM\
+  Backup\
+
+The importer must recursively scan all directories.
+
+IMPORTANT:
+
+The source HDD must NEVER be:
+
+- modified
+- renamed
+- moved
+- deleted
+- overwritten
+
+The default operation is COPY.
+
+The source is read-only from the application's perspective.
+
+============================================================
+8. HDD IMPORT MANIFEST
+============================================================
+
+Before copying anything, scan the selected folder.
+
+Display:
+
+Files discovered
+Photos
+Videos
+Total size
+Existing assets
+New assets
+Duplicates
+Unsupported files
+Possible albums
+
+Example:
+
+Old HDD
+
+Photos: 112,320
+Videos: 13,118
+Total: 348 GB
+Existing: 24,532
+New: 100,906
+Unsupported: 125
+
+Require explicit confirmation before starting import.
+
+============================================================
+9. HDD DATE DETECTION
+============================================================
+
+For old photos determine capture date using:
+
+1. EXIF DateTimeOriginal
+2. EXIF DateTimeDigitized
+3. Embedded media creation timestamp
+4. Filename date pattern
+5. Filesystem creation time
+6. Filesystem modification time
+
+Store captureDateSource.
+
+Support common filename patterns such as:
+
+IMG_20120815_143022.jpg
+2012-08-15.jpg
+20120815.jpg
+DSC_20130520.jpg
+VID_20161225_120000.mp4
+
+Do not treat ambiguous numbers as dates unless confidence is high.
+
+============================================================
+10. HDD FOLDER → ALBUM
+============================================================
+
+During HDD import provide an option:
+
+[ ] Do not create albums
+[ ] Create top-level folders as albums
+[ ] Preserve folder hierarchy
+
+Do not automatically create meaningless albums such as:
+
+DCIM
+Backup
+Pictures
+Photos
+
+Allow exclusions where practical.
+
+============================================================
+11. GLOBAL DUPLICATE DETECTION
+============================================================
+
+Duplicate detection must work across ALL sources.
+
+Example:
+
+Google Takeout:
+IMG001.jpg
+SHA256 = ABC
+
+HDD:
+OldPhotos/IMG001.jpg
+SHA256 = ABC
+
+Result:
+
+ONE asset.
+
+The second source must be recorded in asset_sources.
+
+Never use filename alone for duplicate detection.
+
+Same filename + different content = separate assets.
+
+Hash calculation must stream files.
+
+Never load huge files entirely into RAM.
+
+============================================================
+12. HASH / MANIFEST OPTIMIZATION
+============================================================
+
+Avoid unnecessarily hashing the same file twice.
+
+Current workflow should become:
+
+SCAN
+  ↓
+Calculate hash
+  ↓
+Store hash in manifest
+  ↓
+IMPORT
+  ↓
+Reuse hash
+
+Do not recalculate SHA-256 unless necessary.
+
+The manifest should retain:
+
+- sourcePath
+- fileSize
+- modifiedTime
+- hash
+- mediaType
+
+If the source has not changed, reuse known manifest information.
+
+============================================================
+13. IMPORT ENGINE — CONTROLLED CONCURRENCY
+============================================================
+
+The current importer is too sequential for a large library.
+
+Implement a controlled worker pool.
+
+Example:
+
+IMPORT_CONCURRENCY=4
+
+Architecture:
+
+Import Queue
+ ├── Worker 1
+ ├── Worker 2
+ ├── Worker 3
+ └── Worker 4
+
+Make concurrency configurable.
+
+Do NOT create unlimited workers.
+
+The system should remain stable with 100,000+ files.
+
+============================================================
+14. IMPORT PROCESSING PIPELINE
+============================================================
+
+Each media item should follow:
+
+DISCOVER
+ ↓
+READ MANIFEST
+ ↓
+READ TAKEOUT METADATA
+ ↓
+READ EXIF
+ ↓
+READ VIDEO METADATA
+ ↓
+HASH
+ ↓
+CHECK EXISTING ASSET
+ ↓
+CREATE OR REUSE ASSET
+ ↓
+COPY ORIGINAL IF REQUIRED
+ ↓
+GENERATE THUMBNAIL
+ ↓
+CREATE ALBUM RELATIONSHIPS
+ ↓
+SAVE SOURCE
+ ↓
+MARK COMPLETE
+
+Use transactions where appropriate.
+
+============================================================
+15. CRASH-SAFE IMPORT
+============================================================
+
+The importer must recover after:
+
+- server restart
+- Docker restart
+- browser closing
+- API crash
+- worker crash
+
+If a job was "running" when the server stopped:
+
+Detect stale jobs and make them resumable.
+
+Do not restart from zero.
+
+============================================================
+16. PARTIAL COPY RECOVERY
+============================================================
+
+Handle this case:
+
+Original copy starts
+↓
+Server crashes
+↓
+Database record does not exist
+
+On restart:
+
+Check destination file.
+
+If destination exists and matches source size/hash:
+
+Reuse it.
+
+If incomplete:
+
+Remove the incomplete destination and copy again.
+
+Never blindly create another copy.
+
+============================================================
+17. PAUSE / RESUME
+============================================================
+
+Pause should stop workers from taking NEW files.
+
+Allow the current file operation to finish.
+
+Do not keep workers continuously polling while paused.
+
+Resume should restart the queue.
+
+Support:
+
+Pause
+Resume
+Cancel
+Retry Failed
+
+============================================================
+18. IMPORT DASHBOARD
+============================================================
+
+Improve import UI.
+
+Show:
+
+- total files
+- processed
+- successful
+- duplicates/reused
+- failed
+- remaining
+- percentage
+- current file
+- processing speed
+- estimated remaining time
+- elapsed time
+
+Also show:
+
+Photos
+Videos
+Albums
+Metadata
+Duplicates
+
+Provide:
+
+Pause
+Resume
+Cancel
+Retry failed
+View errors
+
+Do not poll the server excessively.
+
+============================================================
+19. IMPORT VERIFICATION
+============================================================
+
+After import generate a verification report.
+
+Example:
+
+Files discovered: 150,000
+Photos: 135,000
+Videos: 15,000
+New assets: 120,000
+Duplicates reused: 30,000
+Failed: 0
+Albums discovered: 250
+Albums imported: 250
+Metadata processed: 150,000
+
+Verify each successful asset has:
+
+- database record
+- original
+- required thumbnail
+
+Report inconsistencies.
+
+============================================================
+20. MEDIA FORMAT SUPPORT
+============================================================
+
+Support at minimum:
+
+JPG
+JPEG
+PNG
+HEIC
+HEIF
+WEBP
+TIFF
+GIF
+BMP
+
+Video:
+
+MP4
+MOV
+AVI
+MKV
+M4V
+3GP
+WEBM
+
+Also add support for common RAW formats:
+
+CR2
+CR3
+NEF
+ARW
+DNG
+RAF
+ORF
+RW2
+
+Unsupported formats must not crash the import.
+
+Report unsupported files.
+
+============================================================
+21. METADATA EXTRACTION
+============================================================
+
+Images:
+
+- dimensions
+- EXIF
+- GPS
+- camera make
+- camera model
+- lens
+- ISO
+- aperture
+- focal length
+- orientation
+
+Videos:
+
+- duration
+- width
+- height
+- codec
+- frame rate
+- bitrate if available
+- creation timestamp
+
+Use FFprobe for video metadata.
+
+Ensure EXIF orientation is respected when generating thumbnails.
+
+============================================================
+22. THUMBNAIL SYSTEM
+============================================================
+
+Keep existing:
+
+small
+medium
+
+Optionally support:
+
+large preview
+
+Requirements:
+
+- asynchronous generation
+- video thumbnails
+- HEIC thumbnails
+- correct orientation
+- corrupt file handling
+- preserve original
+
+Do not regenerate thumbnails unnecessarily for duplicates.
+
+============================================================
+23. STORAGE
+============================================================
+
+Keep originals outside public static web directories.
+
+Use persistent storage.
+
+Example:
+
+/data/photos/
+
+originals/
+thumbnails/
+transcoded/
+imports/
+
+Do not store 190 GB inside an ephemeral Docker layer.
+
+PHOTO_STORAGE_PATH must be configurable.
+
+Do not expose raw filesystem paths to clients.
+
+============================================================
+24. TIMELINE PERFORMANCE
+============================================================
+
+The application must support large libraries.
+
+Use cursor-based pagination.
+
+Do NOT load all photos into the browser.
+
+Do NOT use large OFFSET queries for the main timeline.
+
+Use:
+
+captureDate DESC
+id DESC
+
+or another stable cursor strategy.
+
+Timeline should display:
+
+2026
+  September 4
+  photos
+
+  September 3
+  photos
+
+2025
+  December 25
+  photos
+
+Use thumbnails for grid rendering.
+
+Load originals only when viewing a photo.
+
+============================================================
+25. PHOTO VIEWER
+============================================================
+
+Support:
+
+Previous
+Next
+Zoom
+Fullscreen
+Download original
+Favorite
+Archive
+Trash
+Add to album
+Remove from album
+Details
+
+Details:
+
+Filename
+Date
+Location
+Camera
+Dimensions
+File size
+Albums
+Favorite
+Archive
+Source
+
+============================================================
+26. TRASH
+============================================================
+
+Delete must NOT immediately delete physical media.
+
+Move to Trash:
+
+isTrashed=true
+trashedAt=<timestamp>
+
+Add:
+
+Trash page
+Restore
+Permanent delete
+Empty trash
+
+Normal timeline/search should hide trashed assets.
+
+The original HDD/Takeout source must never be affected by deleting a managed library asset.
+
+============================================================
+27. ARCHIVE
+============================================================
+
+Archived photos:
+
+- hidden from main timeline
+- searchable
+- remain in albums
+- visible in Archive
+
+Support:
+
+Archive
+Unarchive
+
+============================================================
+28. SEARCH
+============================================================
+
+Improve search beyond filename.
+
+Support:
+
+Filename
+Description
+Album
+Year
+Month
+Date
+Location
+Camera
+Media type
+Favorite
+Archived
+
+Examples:
+
+Singapore
+2024
+December 2025
+Family
+IMG_1234
+Video
+
+Design the search API so future semantic/vector search can be added.
+
+Do NOT implement AI search yet.
+
+============================================================
+29. BROWSER UPLOAD
+============================================================
+
+Complete the browser upload workflow.
+
+Support:
+
+- multiple files
+- drag/drop
+- large files
+- duplicate detection
+- metadata extraction
+- thumbnail generation
+- background processing
+
+Existing asset hash must prevent duplicate creation.
+
+============================================================
+30. SOURCE-AWARE DUPLICATE HANDLING
+============================================================
+
+If the same photo exists in:
+
+Google Takeout
+Old HDD
+Browser upload
+
+the library should show ONE asset.
+
+But the database should retain all known sources.
+
+Example:
+
+Asset ABC
+
+Sources:
+Google Takeout
+D:\Old Photos\Family\IMG001.jpg
+Browser Upload
+
+Never delete source files automatically.
+
+============================================================
+31. PLACES
+============================================================
+
+Keep existing GPS functionality.
+
+Improve later to provide a real map-based view.
+
+For now ensure:
+
+latitude
+longitude
+
+are correctly imported and indexed.
+
+Do not spend significant development time on map UI yet.
+
+============================================================
+32. SECURITY
+============================================================
+
+Review every API endpoint.
+
+Ensure users can only access their own:
+
+photos
+albums
+imports
+thumbnails
+originals
+metadata
+
+Do not rely solely on client-side checks.
+
+Verify ownership on the server.
+
+Do not expose filesystem paths.
+
+============================================================
+33. DOCKER / PRODUCTION
+============================================================
+
+Review docker-compose.
+
+Ensure persistent volumes for:
+
+PostgreSQL
+photo storage
+
+Application restarts must not lose:
+
+database
+media
+import state
+
+Add health checks where appropriate.
+
+Make environment variables documented.
+
+============================================================
+34. BACKUP
+============================================================
+
+Document backup strategy for:
+
+1. Originals
+2. PostgreSQL database
+3. Configuration
+
+Thumbnails can be regenerated and should not be considered the only backup.
+
+The application should never imply that a single server copy is sufficient backup.
+
+============================================================
+35. TEST FIXTURE
+============================================================
+
+Before using the real Takeout, create a small test dataset.
+
+Include:
+
+1. Normal JPG
+2. JPG with EXIF
+3. JPG with GPS
+4. Video
+5. Duplicate file
+6. Same photo in multiple albums
+7. Missing JSON
+8. Corrupt file
+9. Same filename but different content
+10. HDD folder import
+
+Example:
+
+Google Photos/
+  2024/
+    IMG001.jpg
+
+Google Photos/
+  Albums/
+    Family/
+      IMG001.jpg
+
+Google Photos/
+  Albums/
+    Vacation/
+      IMG001.jpg
+
+Expected:
+
+ONE asset
+
+Albums:
+Family
+Vacation
+
+============================================================
+36. TEST FAILURE / RECOVERY
+============================================================
+
+Test:
+
+Fresh import
+Repeat same import
+Pause
+Resume
+Cancel
+Retry failed
+Server restart during import
+Worker failure
+Partial copy
+Duplicate across sources
+Disconnected HDD
+Trash
+Restore
+Archive
+Unarchive
+Search
+Album creation
+
+Fix all failures.
+
+============================================================
+37. DO NOT IMPLEMENT YET
+============================================================
+
+Do not implement these until the core library is stable:
+
+- Face recognition
+- People
+- AI object recognition
+- Semantic search
+- Memories
+- Mobile applications
+- Partner sharing
+- Advanced sharing
+- AI-generated albums
+
+However, keep the architecture extensible for these features.
+
+============================================================
+38. FUTURE AI ARCHITECTURE
+============================================================
+
+Prepare for future:
+
+PostgreSQL
++
+pgvector
++
+Local ML service
++
+Background workers
+
+Future capabilities:
+
+- Face embeddings
+- People
+- Image embeddings
+- Semantic search
+- Object detection
+- Memories
+
+No mandatory cloud AI.
+
+No mandatory Google API.
+
+The application must remain self-hosted.
+
+============================================================
+39. FUTURE MOBILE BACKUP
+============================================================
+
+Prepare the API for future Android/iOS clients.
+
+Future:
+
+Phone
+ ↓
+Background upload
+ ↓
+Import engine
+ ↓
+Hash
+ ↓
+Dedup
+ ↓
+Unified library
+
+Do not build the mobile app now.
+
+============================================================
+40. USER INTERFACE
+============================================================
+
+Keep the existing design.
+
+Main navigation should support:
+
+Photos
+Albums
+Favorites
+Places
+Archive
+Trash
+
+And:
+
+Import
+Upload
+Settings
+
+Improve existing screens rather than redesigning the application unnecessarily.
+
+============================================================
+41. IMPLEMENTATION RULES
+============================================================
+
+VERY IMPORTANT:
+
+- Do not reset the database.
+- Do not delete existing data.
+- Do not remove working features.
+- Do not automatically import the real 189.6 GB archive.
+- Do not modify the source HDD.
+- Do not move source files.
+- Do not rename source files.
+- Do not permanently delete duplicate source files.
+- Do not expose original media publicly.
+- Do not load the entire library into RAM.
+- Do not create one database record for every album copy of the same media.
+- Do not use filename as the unique identity.
+- Do not introduce unlimited parallel processing.
+
+============================================================
+42. IMPLEMENTATION ORDER
+============================================================
+
+Implement in this order:
+
+PHASE 1
+Codebase review.
+
+PHASE 2
+Database constraints and migrations.
+
+PHASE 3
+Asset/source model.
+
+PHASE 4
+Google Takeout importer hardening.
+
+PHASE 5
+Takeout album reconstruction.
+
+PHASE 6
+HDD/local-folder importer.
+
+PHASE 7
+Global deduplication.
+
+PHASE 8
+Manifest optimization.
+
+PHASE 9
+Controlled worker queue.
+
+PHASE 10
+Crash recovery/resume.
+
+PHASE 11
+Metadata and thumbnail improvements.
+
+PHASE 12
+Timeline performance.
+
+PHASE 13
+Trash/archive.
+
+PHASE 14
+Search.
+
+PHASE 15
+Browser upload.
+
+PHASE 16
+Docker/production.
+
+PHASE 17
+Testing.
+
+PHASE 18
+Documentation.
+
+============================================================
+43. ACCEPTANCE CRITERIA
+============================================================
+
+The implementation is considered successful only if:
+
+A. Google Takeout can be scanned without modifying source data.
+
+B. Multiple Takeout ZIP parts can be combined safely.
+
+C. Identical files across different Takeout album folders become ONE asset.
+
+D. Album relationships are preserved.
+
+E. Identical files across Google Takeout and HDD become ONE asset.
+
+F. Different files with the same filename remain separate.
+
+G. Import can resume after server restart.
+
+H. Import can pause/resume.
+
+I. Failed files can be retried.
+
+J. Source HDD is never modified.
+
+K. Metadata is preserved.
+
+L. EXIF/GPS is correctly imported.
+
+M. Videos are correctly processed.
+
+N. Thumbnails are generated.
+
+O. Database prevents duplicate assets under concurrent workers.
+
+P. Timeline works efficiently with a large library.
+
+Q. Trash does not immediately destroy media.
+
+R. Archive works.
+
+S. Search works for metadata.
+
+T. Browser upload works.
+
+============================================================
+44. FINAL VALIDATION
+============================================================
+
+After implementation:
+
+Run:
+
+- frontend typecheck
+- backend typecheck
+- database migration check
+- tests
+- production build
+- Docker build
+
+Fix all errors.
+
+Do not leave known TypeScript/build/test errors.
+
+============================================================
+45. DOCUMENTATION
+============================================================
+
+Update README with:
+
+1. Architecture
+2. Installation
+3. Docker deployment
+4. Storage configuration
+5. Database configuration
+6. Google Takeout import procedure
+7. HDD import procedure
+8. Duplicate handling
+9. Backup
+10. Recovery
+11. Troubleshooting
+12. Environment variables
+
+Also create:
+
+IMPORT_GUIDE.md
+
+containing the exact safe workflow for importing:
+
+A. Google Takeout
+B. Old HDD
+C. Future uploads
+
+============================================================
+FINAL RESPONSE FROM THE CODING AGENT
+============================================================
+
+After implementation, provide:
+
+1. Summary of existing architecture
+2. Files changed
+3. Database changes
+4. API changes
+5. Frontend changes
+6. Importer changes
+7. Performance improvements
+8. Security improvements
+9. Tests performed
+10. Known limitations
+11. Deployment instructions
+12. Google Takeout import instructions
+13. HDD import instructions
+
+MOST IMPORTANT:
+
+Do not claim the real 189.6 GB library is safe to import until the test fixture successfully passes the duplicate, album, metadata, recovery and verification tests.
+
+The immediate goal is a stable, data-safe import engine and unified photo library.

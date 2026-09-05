@@ -1,0 +1,1005 @@
+You are taking over an existing project called "My-Photos".
+
+I have uploaded the existing My-Photos project as a ZIP. This project is the starting point for development.
+
+IMPORTANT:
+DO NOT rebuild the application from scratch.
+DO NOT replace the existing architecture unnecessarily.
+DO NOT delete existing functionality.
+FIRST inspect and understand the complete existing codebase, database schema, API, frontend, import system, Docker configuration and README.
+
+The goal is to evolve this application into a self-hosted Google Photos-style personal photo management platform.
+
+I already have:
+1. A complete Google Photos Takeout export of approximately 189.6 GB split across multiple ZIP files.
+2. A large collection of older photos/videos stored on an old HDD.
+3. The existing My-Photos application uploaded with this prompt.
+
+The final application must combine all these sources into ONE unified photo library.
+
+==================================================
+STEP 1 — ANALYZE EXISTING PROJECT FIRST
+==================================================
+
+Before making changes:
+
+Inspect:
+- package.json files
+- frontend architecture
+- backend architecture
+- database schema
+- Drizzle configuration
+- API routes
+- authentication
+- photo storage
+- thumbnail system
+- album system
+- favorites
+- places/GPS
+- current Google Takeout importer
+- import job system
+- Docker configuration
+- environment configuration
+- README
+- existing tests
+
+Create a short internal architecture assessment.
+
+Identify:
+- what already works
+- what should be retained
+- what needs modification
+- what is missing
+- potential data-loss risks
+- performance bottlenecks
+
+Do not make assumptions about the codebase without inspecting it.
+
+==================================================
+PRODUCT GOAL
+==================================================
+
+Build a self-hosted alternative to Google Photos.
+
+The application should eventually provide:
+
+- Photos timeline
+- Videos
+- Albums
+- Favorites
+- Archive
+- Trash
+- Search
+- Places/map
+- Upload
+- Google Takeout import
+- HDD/local-folder import
+- Duplicate detection
+- Metadata preservation
+- Photo viewer
+- Batch operations
+- Sharing
+- Face recognition
+- People
+- AI/semantic search
+- Memories
+- Mobile backup
+- Multiple users
+
+However, do NOT implement everything at once.
+
+Prioritize the core library, data safety and import engine first.
+
+==================================================
+UNIFIED LIBRARY ARCHITECTURE
+==================================================
+
+All media sources must feed one unified asset library.
+
+Sources:
+
+Google Takeout
+      │
+Old HDD
+      │
+Local folders
+      │
+Browser upload
+      │
+Future phone backup
+      │
+      ▼
+  IMPORT ENGINE
+      │
+      ▼
+ HASH / DEDUPLICATION
+      │
+      ▼
+ UNIFIED ASSET DATABASE
+      │
+      ├── Timeline
+      ├── Albums
+      ├── Favorites
+      ├── Archive
+      ├── Places
+      └── Search
+
+Do NOT create separate libraries for each source.
+
+==================================================
+SOURCE TRACKING
+==================================================
+
+Every imported asset should retain information about where it came from.
+
+Add an asset_sources concept/table if the existing schema does not already support it.
+
+Suggested fields:
+
+- id
+- assetId
+- importJobId
+- sourceType
+- sourcePath
+- sourceFilename
+- sourceHash
+- importedAt
+
+sourceType values:
+
+GOOGLE_TAKEOUT
+LOCAL_FOLDER
+EXTERNAL_HDD
+BROWSER_UPLOAD
+PHONE
+
+Example:
+
+Asset ABC123
+
+Sources:
+- Google Takeout
+- Old HDD
+
+The same physical photo must still be ONE asset.
+
+==================================================
+GOOGLE TAKEOUT IMPORT
+==================================================
+
+Improve the existing Takeout importer.
+
+The importer must support multiple Takeout ZIP parts containing the same directory structure.
+
+Do not assume each ZIP represents a separate album/library.
+
+The importer must:
+
+- recursively scan
+- process photos
+- process videos
+- read Takeout JSON metadata
+- extract EXIF
+- extract GPS
+- detect albums
+- calculate SHA-256
+- deduplicate
+- preserve album relationships
+- generate thumbnails
+- track progress
+- resume after interruption
+- retry failed files
+- handle corrupt files
+- never modify source files
+
+Example:
+
+Google Photos/
+  2024/
+    IMG001.jpg
+
+Google Photos/
+  Albums/
+    Family/
+      IMG001.jpg
+
+Google Photos/
+  Albums/
+    Vacation/
+      IMG001.jpg
+
+If hashes match:
+
+ONE asset:
+
+IMG001
+ ├── Timeline
+ ├── Family
+ └── Vacation
+
+Never create three physical copies.
+
+==================================================
+OLD HDD / LOCAL FOLDER IMPORT
+==================================================
+
+Add a first-class "Import Folder" feature.
+
+The user should be able to select an old HDD or local folder containing arbitrary folders.
+
+Example:
+
+D:\Old Photos\
+  2008\
+  2009\
+  Family\
+  Vacation\
+  Camera\
+  DCIM\
+  Backup\
+
+The application must recursively scan all subdirectories.
+
+The source HDD must NEVER be modified.
+
+Default operation is COPY, never MOVE.
+
+The application should show a pre-import scan:
+
+Files discovered
+Photos
+Videos
+Total size
+Existing assets
+New assets
+Potential duplicates
+Unsupported files
+Possible albums
+
+The user confirms before importing.
+
+==================================================
+HDD DATE DETECTION
+==================================================
+
+For old photos, determine capture date using:
+
+1. EXIF DateTimeOriginal
+2. EXIF DateTimeDigitized
+3. embedded media creation timestamp
+4. filename date pattern
+5. filesystem creation time
+6. filesystem modification time
+
+Store the date source.
+
+Example:
+
+captureDate:
+2011-08-14
+
+captureDateSource:
+EXIF
+
+or:
+
+captureDateSource:
+FILENAME
+
+Do not blindly trust filesystem timestamps.
+
+==================================================
+FOLDER → ALBUM OPTION
+==================================================
+
+During local/HDD import provide:
+
+[ ] Import folder structure as albums
+
+If enabled:
+
+Old HDD/
+  Family/
+  Vacation/
+  Singapore/
+
+can create albums:
+
+Family
+Vacation
+Singapore
+
+Do not automatically create useless albums such as:
+
+DCIM
+Backup
+Photos
+Pictures
+
+Allow exclusions or intelligent filtering.
+
+==================================================
+GLOBAL DUPLICATE DETECTION
+==================================================
+
+Duplicate detection must work across ALL sources.
+
+Google Takeout:
+photo.jpg
+hash = ABC
+
+HDD:
+old/photo.jpg
+hash = ABC
+
+Result:
+
+ONE asset.
+
+Do not use filename as the duplicate identifier.
+
+Two files with the same filename but different content must remain separate assets.
+
+Use SHA-256 or an equivalent strong content hash.
+
+Hashing must stream files and must NOT load huge files entirely into RAM.
+
+==================================================
+DATABASE
+==================================================
+
+Review and improve the existing PostgreSQL schema.
+
+Do not destroy existing data.
+
+Use proper Drizzle migrations.
+
+The asset model should support:
+
+- id
+- userId
+- filename
+- originalPath
+- mimeType
+- mediaType
+- fileSize
+- hash
+- width
+- height
+- duration
+- captureDate
+- captureDateSource
+- latitude
+- longitude
+- description
+- cameraMake
+- cameraModel
+- lensModel
+- orientation
+- isFavorite
+- isArchived
+- isTrashed
+- trashedAt
+- createdAt
+- updatedAt
+
+Only add fields that are not already represented by an equivalent field.
+
+Add appropriate PostgreSQL indexes.
+
+==================================================
+TRASH
+==================================================
+
+Do NOT permanently delete a photo immediately.
+
+Delete should move it to Trash.
+
+Add:
+
+isTrashed
+trashedAt
+
+Features:
+
+- Trash page
+- Restore
+- Permanently delete
+- Empty trash
+
+Normal timeline/search should exclude trashed assets.
+
+==================================================
+ARCHIVE
+==================================================
+
+Add Google Photos-style Archive.
+
+Archived photos:
+
+- disappear from main timeline
+- remain searchable
+- remain in albums
+- appear in Archive
+
+Provide:
+
+Archive
+Unarchive
+
+==================================================
+TIMELINE
+==================================================
+
+Improve the timeline to resemble Google Photos.
+
+Group photos by date:
+
+2026
+
+September 3
+[photos]
+
+September 2
+[photos]
+
+September 1
+[photos]
+
+2025
+
+December 25
+[photos]
+
+Use captureDate.
+
+Do not load the entire library at once.
+
+Use cursor-based pagination/infinite scrolling.
+
+Avoid offset pagination for the main photo library.
+
+==================================================
+PHOTO VIEWER
+==================================================
+
+Improve the full-screen viewer.
+
+Support:
+
+- Previous
+- Next
+- Zoom
+- Fullscreen
+- Download original
+- Favorite
+- Archive
+- Delete → Trash
+- Add to album
+- Remove from album
+- Details
+
+Details should show:
+
+Filename
+Date taken
+Location
+Camera
+Dimensions
+File size
+Albums
+Favorite
+Source
+
+==================================================
+SEARCH
+==================================================
+
+Improve search beyond filename matching.
+
+Support:
+
+- filename
+- description
+- album
+- year
+- month
+- date
+- location
+- camera
+- media type
+- favorite
+- archived
+
+Examples:
+
+"Singapore"
+"2024"
+"December 2025"
+"IMG_1234"
+"video"
+"Family"
+
+Design the search API so vector/AI search can be added later.
+
+Do NOT implement expensive AI search yet.
+
+==================================================
+UPLOAD
+==================================================
+
+Add browser upload.
+
+Support:
+
+- multiple files
+- drag and drop
+- large files
+- duplicate detection
+- metadata extraction
+- thumbnail generation
+- background processing
+
+Existing files must not be duplicated.
+
+==================================================
+IMPORT ENGINE
+==================================================
+
+Make importing asynchronous and resumable.
+
+Use background workers/queues if compatible with the current architecture.
+
+Requirements:
+
+- bounded concurrency
+- configurable worker count
+- progress tracking
+- pause
+- resume
+- cancel
+- retry failed
+- server restart recovery
+- per-file status
+- error messages
+
+Never load the entire library into memory.
+
+If processing 100,000+ files, the system must remain stable.
+
+==================================================
+IMPORT MANIFEST
+==================================================
+
+Every import should have two stages:
+
+STAGE 1:
+SCAN / MANIFEST
+
+STAGE 2:
+IMPORT
+
+During scan show:
+
+Total files
+Photos
+Videos
+Total size
+Existing assets
+New assets
+Duplicates
+Unsupported files
+Albums
+
+Only after confirmation should actual copying/importing start.
+
+==================================================
+IMPORT VERIFICATION
+==================================================
+
+At the end of each import generate:
+
+Files discovered
+Photos
+Videos
+New assets
+Duplicates reused
+Failed
+Albums discovered
+Albums imported
+Metadata processed
+
+Verify:
+
+Every imported asset has:
+- database record
+- original file
+- thumbnail
+
+Report inconsistencies.
+
+==================================================
+MEDIA STORAGE
+==================================================
+
+Original media must not be stored inside an ephemeral Docker container layer.
+
+Use a configurable persistent storage path.
+
+Example:
+
+PHOTO_STORAGE_PATH=/data/photos
+
+Separate:
+
+originals/
+thumbnails/
+transcoded/
+imports/
+
+Original files must never be overwritten accidentally.
+
+Original media must not be publicly exposed as static files.
+
+Serve media through authorized API routes.
+
+==================================================
+THUMBNAILS
+==================================================
+
+Generate thumbnails asynchronously.
+
+Support:
+
+- JPG
+- PNG
+- HEIC/HEIF
+- WEBP
+- TIFF where possible
+- common RAW formats where possible
+- MP4
+- MOV
+- other common videos
+
+Preserve originals.
+
+Handle EXIF orientation correctly.
+
+Generate video preview thumbnails.
+
+Handle corrupt media gracefully.
+
+==================================================
+METADATA
+==================================================
+
+Preserve as much metadata as practical.
+
+Images:
+
+EXIF
+GPS
+Camera
+Lens
+ISO
+Aperture
+Focal length
+Orientation
+Dimensions
+
+Videos:
+
+Duration
+Resolution
+Codec
+Frame rate
+Creation time
+
+Google Takeout JSON metadata must be retained/imported where available.
+
+==================================================
+SECURITY
+==================================================
+
+Review all APIs.
+
+Ensure authenticated users can only access their own:
+
+- photos
+- albums
+- imports
+- thumbnails
+- originals
+- metadata
+
+Do not trust IDs supplied by the client.
+
+Do not expose filesystem paths unnecessarily.
+
+==================================================
+PERFORMANCE
+==================================================
+
+Design for:
+
+100,000+ assets
+200+ GB
+Potentially millions of database records in future
+
+Use:
+
+- database indexes
+- cursor pagination
+- lazy loading
+- thumbnail-first UI
+- caching
+- background processing
+- bounded concurrency
+- efficient SQL
+- batch operations
+- no N+1 queries
+
+==================================================
+FUTURE AI
+==================================================
+
+Prepare architecture for future:
+
+- Face recognition
+- People
+- Object detection
+- Image embeddings
+- Semantic search
+- Memories
+- Automatic categorization
+
+Potential architecture:
+
+PostgreSQL
++
+pgvector
++
+local ML service
++
+background workers
+
+Do NOT implement these features in the current phase.
+
+==================================================
+MOBILE FUTURE
+==================================================
+
+Prepare APIs for future Android/iOS clients.
+
+Future features:
+
+- automatic camera backup
+- background uploads
+- duplicate detection
+- upload queue
+- offline queue
+- Wi-Fi-only option
+
+Do not build the mobile application yet.
+
+==================================================
+ADMIN / SYSTEM
+==================================================
+
+Add a basic administration/status area where useful.
+
+Show:
+
+Storage used
+Photos
+Videos
+Albums
+Database status
+Background jobs
+Import jobs
+Failed jobs
+System health
+
+==================================================
+BACKUP
+==================================================
+
+Design the application so these can be backed up independently:
+
+1. Original media
+2. PostgreSQL database
+3. Configuration
+
+Document the backup strategy.
+
+Do not treat thumbnails as the only backup.
+
+==================================================
+DOCKER
+==================================================
+
+Review Docker configuration.
+
+Ensure:
+
+- PostgreSQL persistent volume
+- media persistent volume
+- application restart safety
+- environment variables
+- health checks
+- worker restart safety
+
+The application must survive container restarts without losing import state.
+
+==================================================
+TESTING
+==================================================
+
+Create a small test library before testing the real Takeout.
+
+Test:
+
+- normal JPG
+- EXIF photo
+- GPS photo
+- video
+- duplicate
+- same photo in multiple albums
+- missing JSON
+- corrupted file
+- same filename with different content
+- HDD folder import
+- duplicate across HDD and Takeout
+
+Test:
+
+Fresh import
+Repeat import
+Pause/resume
+Cancel
+Retry
+Server restart
+Disconnected HDD
+Trash
+Restore
+Archive
+Unarchive
+Search
+Album creation
+
+==================================================
+USER EXPERIENCE
+==================================================
+
+Keep the existing application's visual design where possible.
+
+Improve UX where required.
+
+The application should feel like a polished personal photo management system.
+
+Main navigation should eventually include:
+
+Photos
+Albums
+Favorites
+Archive
+People
+Places
+Search
+Trash
+
+And:
+
+Import
+Upload
+Settings
+
+Do not overcomplicate the first release.
+
+==================================================
+IMPLEMENTATION ORDER
+==================================================
+
+Implement in this exact order:
+
+PHASE 1
+Analyze existing project.
+
+PHASE 2
+Fix/improve database schema and migrations.
+
+PHASE 3
+Create unified asset/source model.
+
+PHASE 4
+Improve Google Takeout importer.
+
+PHASE 5
+Add local folder/HDD importer.
+
+PHASE 6
+Implement duplicate handling across all sources.
+
+PHASE 7
+Implement resumable background imports.
+
+PHASE 8
+Improve thumbnails and metadata processing.
+
+PHASE 9
+Improve timeline and photo viewer.
+
+PHASE 10
+Add Trash and Archive.
+
+PHASE 11
+Improve search.
+
+PHASE 12
+Add browser upload.
+
+PHASE 13
+Improve Docker/production deployment.
+
+PHASE 14
+Testing and documentation.
+
+DO NOT implement AI/face recognition/mobile features until these phases are stable.
+
+==================================================
+CRITICAL DATA-SAFETY RULE
+==================================================
+
+NEVER:
+
+- delete source HDD files
+- move source HDD files
+- rename source HDD files
+- overwrite original media
+- automatically delete duplicates
+- destroy existing database data
+- reset the database
+- automatically import the real 189.6 GB Takeout during development
+
+The system must always preserve the original source data.
+
+==================================================
+FINAL DELIVERABLE
+==================================================
+
+After completing the implementation:
+
+1. Run all available tests.
+2. Run frontend type checking.
+3. Run backend type checking.
+4. Run production build.
+5. Fix all errors.
+6. Create/update database migrations.
+7. Update README.
+8. Document Docker setup.
+9. Document storage setup.
+10. Document Google Takeout import.
+11. Document HDD import.
+12. Document backup.
+13. Document recovery after server restart.
+
+Finally provide a report containing:
+
+- Existing architecture
+- Files changed
+- Database changes
+- API changes
+- Frontend changes
+- Importer changes
+- New features
+- Tests performed
+- Known limitations
+- Exact steps to deploy
+- Exact steps to import Google Takeout
+- Exact steps to import the old HDD
+
+IMPORTANT:
+Do not stop after creating a plan.
+Implement the changes in the existing project.
+
+However, before making destructive architectural changes, inspect the existing code and choose the smallest safe modification that achieves the requirement.

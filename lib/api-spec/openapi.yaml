@@ -3,20 +3,23 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Private local photo library API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: auth
+  - name: photos
+  - name: albums
+  - name: imports
+  - name: library
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +27,726 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/session:
+    get:
+      operationId: getSession
+      tags: [auth]
+      summary: Get current local session
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in to the local library
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Authenticated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          description: Invalid credentials
+    delete:
+      operationId: logout
+      tags: [auth]
+      summary: End the current session
+      responses:
+        "204":
+          description: Logged out
+  /photos:
+    get:
+      operationId: listPhotos
+      tags: [photos]
+      summary: List photos and videos with filters
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: mediaType
+          schema:
+            type: string
+            enum: [all, photo, video]
+            default: all
+        - in: query
+          name: favorite
+          schema: { type: boolean }
+        - in: query
+          name: archived
+          schema: { type: boolean }
+        - in: query
+          name: trashed
+          schema: { type: boolean }
+        - in: query
+          name: sourceType
+          schema:
+            type: string
+            enum: [GOOGLE_TAKEOUT, LOCAL_FOLDER, EXTERNAL_HDD, BROWSER_UPLOAD, PHONE]
+        - in: query
+          name: albumId
+          schema: { type: string }
+        - in: query
+          name: year
+          schema: { type: number }
+        - in: query
+          name: month
+          schema: { type: number, minimum: 1, maximum: 12 }
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: A page of media
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoPage"
+  /photos/{photoId}:
+    get:
+      operationId: getPhoto
+      tags: [photos]
+      summary: Get one photo or video
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Media item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Photo"
+        "404":
+          description: Not found
+    delete:
+      operationId: deletePhoto
+      tags: [photos]
+      summary: Move media to Trash without deleting the original
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "204":
+          description: Moved to Trash
+  /photos/{photoId}/favorite:
+    patch:
+      operationId: toggleFavorite
+      tags: [photos]
+      summary: Set favorite state
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoriteInput"
+      responses:
+        "200":
+          description: Updated media item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Photo"
+  /photos/{photoId}/archive:
+    patch:
+      operationId: toggleArchive
+      tags: [photos]
+      summary: Set archive state
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ArchiveInput"
+      responses:
+        "200":
+          description: Updated media item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Photo"
+  /photos/{photoId}/restore:
+    post:
+      operationId: restorePhoto
+      tags: [photos]
+      summary: Restore media from Trash
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Restored media item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Photo"
+  /photos/{photoId}/permanent:
+    delete:
+      operationId: permanentlyDeletePhoto
+      tags: [photos]
+      summary: Permanently delete trashed media and managed derivatives
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "204":
+          description: Permanently deleted
+  /trash:
+    delete:
+      operationId: emptyTrash
+      tags: [photos]
+      summary: Permanently delete all trashed media
+      responses:
+        "204":
+          description: Trash emptied
+  /photos/{photoId}/download:
+    get:
+      operationId: downloadPhoto
+      tags: [photos]
+      summary: Download the original media file
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Original file
+          content:
+            application/octet-stream: {}
+  /albums:
+    get:
+      operationId: listAlbums
+      tags: [albums]
+      summary: List albums
+      responses:
+        "200":
+          description: Albums
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Album"
+    post:
+      operationId: createAlbum
+      tags: [albums]
+      summary: Create an album
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlbumInput"
+      responses:
+        "201":
+          description: Created album
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Album"
+  /albums/{albumId}:
+    patch:
+      operationId: updateAlbum
+      tags: [albums]
+      summary: Rename an album
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlbumUpdate"
+      responses:
+        "200":
+          description: Updated album
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Album"
+    delete:
+      operationId: deleteAlbum
+      tags: [albums]
+      summary: Delete an album without deleting media
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      responses:
+        "204":
+          description: Deleted
+  /albums/{albumId}/photos:
+    post:
+      operationId: addPhotosToAlbum
+      tags: [albums]
+      summary: Add photos to an album
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoIdsInput"
+      responses:
+        "200":
+          description: Updated album
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Album"
+  /albums/{albumId}/photos/{photoId}:
+    delete:
+      operationId: removePhotoFromAlbum
+      tags: [albums]
+      summary: Remove a photo from an album
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "204":
+          description: Removed
+  /imports:
+    get:
+      operationId: listImports
+      tags: [imports]
+      summary: List recent import jobs
+      responses:
+        "200":
+          description: Import jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImportJob"
+    post:
+      operationId: startImport
+      tags: [imports]
+      summary: Scan a local media folder and create a reviewable manifest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportInput"
+      responses:
+        "202":
+          description: Import started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/upload:
+    post:
+      operationId: uploadBrowserFile
+      tags: [imports]
+      summary: Upload one browser file into the import engine
+      parameters:
+        - name: X-File-Name
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+          image/*:
+            schema:
+              type: string
+              format: binary
+          video/*:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: Upload accepted for background import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/{importId}:
+    get:
+      operationId: getImport
+      tags: [imports]
+      summary: Get import progress and errors
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Import job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/{importId}/pause:
+    post:
+      operationId: pauseImport
+      tags: [imports]
+      summary: Pause an active import
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Updated import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/{importId}/resume:
+    post:
+      operationId: resumeImport
+      tags: [imports]
+      summary: Resume a paused import
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Updated import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/{importId}/cancel:
+    post:
+      operationId: cancelImport
+      tags: [imports]
+      summary: Cancel an active import
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Updated import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/{importId}/confirm:
+    post:
+      operationId: confirmImport
+      tags: [imports]
+      summary: Confirm a scanned manifest and begin importing
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "202":
+          description: Import started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /imports/{importId}/retry:
+    post:
+      operationId: retryImport
+      tags: [imports]
+      summary: Retry failed files from an import
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "202":
+          description: Retry started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+  /stats:
+    get:
+      operationId: getStats
+      tags: [library]
+      summary: Get library statistics
+      responses:
+        "200":
+          description: Library statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryStats"
+  /places:
+    get:
+      operationId: listPlaces
+      tags: [library]
+      summary: Group media by approximate GPS location
+      responses:
+        "200":
+          description: Places
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Place"
 components:
+  parameters:
+    PhotoId:
+      in: path
+      name: photoId
+      required: true
+      schema: { type: string }
+    AlbumId:
+      in: path
+      name: albumId
+      required: true
+      schema: { type: string }
+    ImportId:
+      in: path
+      name: importId
+      required: true
+      schema: { type: string }
+    Cursor:
+      in: query
+      name: cursor
+      schema: { type: string }
+    Limit:
+      in: query
+      name: limit
+      schema: { type: number, minimum: 1, maximum: 100, default: 60 }
   schemas:
     HealthStatus:
       type: object
       properties:
+        status: { type: string }
+      required: [status]
+    Session:
+      type: object
+      properties:
+        authenticated: { type: boolean }
+        username: { type: ["string", "null"] }
+      required: [authenticated, username]
+    LoginInput:
+      type: object
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, minLength: 1 }
+      required: [username, password]
+    Photo:
+      type: object
+      properties:
+        id: { type: string }
+        filename: { type: string }
+        thumbnailUrl: { type: string }
+        mediumUrl: { type: string }
+        originalUrl: { type: string }
+        mimeType: { type: string }
+        mediaType:
+          type: string
+          enum: [photo, video]
+        fileSize: { type: number }
+        width: { type: ["number", "null"] }
+        height: { type: ["number", "null"] }
+        captureDate: { type: string, format: date-time }
+        captureDateSource:
+          type: string
+          enum: [TAKEOUT, EXIF, MEDIA_CREATION, FILENAME, FILESYSTEM_BIRTHTIME, FILESYSTEM_MTIME, UNKNOWN]
+        description: { type: ["string", "null"] }
+        cameraMake: { type: ["string", "null"] }
+        cameraModel: { type: ["string", "null"] }
+        lensModel: { type: ["string", "null"] }
+        orientation: { type: ["number", "null"] }
+        duration: { type: ["number", "null"] }
+        latitude: { type: ["number", "null"] }
+        longitude: { type: ["number", "null"] }
+        isFavorite: { type: boolean }
+        isArchived: { type: boolean }
+        isTrashed: { type: boolean }
+        trashedAt: { type: ["string", "null"], format: date-time }
+        albumIds:
+          type: array
+          items: { type: string }
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhotoSource"
+      required:
+        - id
+        - filename
+        - thumbnailUrl
+        - mediumUrl
+        - originalUrl
+        - mimeType
+        - mediaType
+        - fileSize
+        - width
+        - height
+        - captureDate
+        - captureDateSource
+        - description
+        - cameraMake
+        - cameraModel
+        - lensModel
+        - orientation
+        - duration
+        - latitude
+        - longitude
+        - isFavorite
+        - isArchived
+        - isTrashed
+        - trashedAt
+        - albumIds
+        - sources
+    PhotoPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Photo" }
+        nextCursor: { type: ["string", "null"] }
+        total: { type: number }
+      required: [items, nextCursor, total]
+    FavoriteInput:
+      type: object
+      properties:
+        isFavorite: { type: boolean }
+      required: [isFavorite]
+    ArchiveInput:
+      type: object
+      properties:
+        isArchived: { type: boolean }
+      required: [isArchived]
+    PhotoSource:
+      type: object
+      properties:
+        sourceType:
+          type: string
+          enum: [GOOGLE_TAKEOUT, LOCAL_FOLDER, EXTERNAL_HDD, BROWSER_UPLOAD, PHONE]
+        sourceFilename: { type: string }
+        importedAt: { type: string, format: date-time }
+      required: [sourceType, sourceFilename, importedAt]
+    Album:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        photoCount: { type: number }
+        coverUrl: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, name, photoCount, coverUrl, createdAt, updatedAt]
+    AlbumInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+      required: [name]
+    AlbumUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+      required: [name]
+    PhotoIdsInput:
+      type: object
+      properties:
+        photoIds:
+          type: array
+          items: { type: string }
+          minItems: 1
+      required: [photoIds]
+    ImportInput:
+      type: object
+      properties:
+        sourcePath: { type: string, minLength: 1 }
+        sourceType:
+          type: string
+          enum: [GOOGLE_TAKEOUT, LOCAL_FOLDER, EXTERNAL_HDD, BROWSER_UPLOAD, PHONE]
+          default: GOOGLE_TAKEOUT
+        importFolderStructureAsAlbums: { type: boolean, default: false }
+      required: [sourcePath, sourceType]
+    ImportJob:
+      type: object
+      properties:
+        id: { type: string }
+        sourcePath: { type: string }
         status:
           type: string
+          enum: [scanning, ready, importing, paused, completed, cancelled, failed]
+        sourceType:
+          type: string
+          enum: [GOOGLE_TAKEOUT, LOCAL_FOLDER, EXTERNAL_HDD, BROWSER_UPLOAD, PHONE]
+        importFolderStructureAsAlbums: { type: boolean }
+        totalFiles: { type: number }
+        processedFiles: { type: number }
+        successfulFiles: { type: number }
+        duplicateFiles: { type: number }
+        failedFiles: { type: number }
+        currentFile: { type: ["string", "null"] }
+        errors:
+          type: array
+          items: { type: string }
+        startedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        manifest:
+          $ref: "#/components/schemas/ImportManifest"
       required:
-        - status
-
+        - id
+        - sourcePath
+         - status
+         - sourceType
+         - importFolderStructureAsAlbums
+        - totalFiles
+        - processedFiles
+        - successfulFiles
+        - duplicateFiles
+        - failedFiles
+        - currentFile
+        - errors
+        - startedAt
+         - updatedAt
+         - manifest
+    ImportManifest:
+      type: object
+      properties:
+        totalFiles: { type: number }
+        photos: { type: number }
+        videos: { type: number }
+        totalSize: { type: number }
+        existingAssets: { type: number }
+        newAssets: { type: number }
+        duplicateFiles: { type: number }
+        unsupportedFiles: { type: number }
+        albums: { type: number }
+      required: [totalFiles, photos, videos, totalSize, existingAssets, newAssets, duplicateFiles, unsupportedFiles, albums]
+    LibraryStats:
+      type: object
+      properties:
+        totalPhotos: { type: number }
+        totalVideos: { type: number }
+        totalFiles: { type: number }
+        duplicateFiles: { type: number }
+        totalStorageBytes: { type: number }
+        albumCount: { type: number }
+        favoriteCount: { type: number }
+        latestCaptureDate: { type: ["string", "null"], format: date-time }
+      required:
+        - totalPhotos
+        - totalVideos
+        - totalFiles
+        - duplicateFiles
+        - totalStorageBytes
+        - albumCount
+        - favoriteCount
+        - latestCaptureDate
+    Place:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        photoCount: { type: number }
+        coverUrl: { type: ["string", "null"] }
+      required: [id, label, latitude, longitude, photoCount, coverUrl]

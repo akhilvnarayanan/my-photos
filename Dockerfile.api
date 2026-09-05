@@ -1,0 +1,18 @@
+FROM node:24-alpine
+
+RUN apk add --no-cache ffmpeg
+RUN corepack enable
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json replit.md ./
+COPY artifacts ./artifacts
+COPY lib ./lib
+COPY scripts ./scripts
+
+RUN pnpm install --frozen-lockfile
+
+ENV NODE_ENV=production
+ENV PHOTO_STORAGE_PATH=/photos
+EXPOSE 8080
+
+CMD ["sh", "-c", "pnpm --filter @workspace/db run push && pnpm --filter @workspace/api-server run dev"]

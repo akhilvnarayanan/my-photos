@@ -1,0 +1,3 @@
+- [Restored web artifact registration](artifact-registration.md) — validate an on-disk manifest before previewing restored web apps.
+- [API contract and media compatibility](api-contract-and-media.md) — keep generated numeric schemas compatible with workspace Zod and use ffmpeg for local image/video derivatives.
+- [Import hardening decisions](import-hardening.md) — use database uniqueness, bounded workers, streamed browser staging, and deterministic hash-based managed filenames.

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "My Photos"
+description = "A private self-hosted photo library for importing Google Takeout archives, browsing a chronological timeline, organizing albums, and managing favorites without sending originals to external cloud services."
+version = "1.0.0"
+id = "artifacts/my-photos"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25253
+
+[services.development]
+run = "pnpm --filter @workspace/my-photos run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/my-photos", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/my-photos/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25253"
+BASE_PATH = "/"

@@ -1,0 +1,15 @@
+FROM node:24-alpine AS build
+
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json replit.md ./
+COPY artifacts ./artifacts
+COPY lib ./lib
+COPY scripts ./scripts
+RUN pnpm install --frozen-lockfile
+RUN PORT=5173 BASE_PATH=/ pnpm --filter @workspace/my-photos run build
+
+FROM nginx:alpine
+COPY --from=build /app/artifacts/my-photos/dist/public /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
