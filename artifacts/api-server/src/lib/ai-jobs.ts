@@ -5,20 +5,24 @@ import { db } from "../db";
 
 export type AiJobStatus = "queued" | "processing" | "completed" | "failed";
 
-export async function enqueueAiJob(userId: string, photoId: string, requestedFeatures = "all") {
-  const existing = await db.select().from(aiJobsTable).where(eq(aiJobsTable.photoId, photoId)).limit(1);
+export async function enqueueAiJob(userId: string, photoId: string, requestedFeatures = "ocr") {
+  const existing = await db.select().from(aiJobsTable)
+    .where(and(eq(aiJobsTable.photoId, photoId), eq(aiJobsTable.requestedFeatures, requestedFeatures)))
+    .limit(1);
   if (existing[0]) return existing[0];
-  const [job] = await db.insert(aiJobsTable).values({ id: randomUUID(), userId, photoId, requestedFeatures, status: "queued" }).returning();
-  return job;
+  const [job] = await db.insert(aiJobsTable).values({ id: randomUUID(), userId, photoId, requestedFeatures, status: "queued" }).onConflictDoNothing().returning();
+  if (job) return job;
+  const [raceWinner] = await db.select().from(aiJobsTable)
+    .where(and(eq(aiJobsTable.photoId, photoId), eq(aiJobsTable.requestedFeatures, requestedFeatures)))
+    .limit(1);
+  return raceWinner;
 }
 
-export async function enqueueAiJobsForPhotos(userId: string, photoIds: string[], requestedFeatures = "all") {
+export async function enqueueAiJobsForPhotos(userId: string, photoIds: string[], requestedFeatures = "ocr") {
   let queued = 0;
   for (const photoId of photoIds) {
-    const existing = await db.select({ id: aiJobsTable.id }).from(aiJobsTable).where(eq(aiJobsTable.photoId, photoId)).limit(1);
-    if (existing[0]) continue;
-    await db.insert(aiJobsTable).values({ id: randomUUID(), userId, photoId, requestedFeatures, status: "queued" }).onConflictDoNothing();
-    queued += 1;
+    const [job] = await db.insert(aiJobsTable).values({ id: randomUUID(), userId, photoId, requestedFeatures, status: "queued" }).onConflictDoNothing().returning({ id: aiJobsTable.id });
+    if (job) queued += 1;
   }
   return queued;
 }
