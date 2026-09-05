@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { db, importJobsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { runImportJob, scanImportJob } from "./lib/importer";
+import { startAiWorker } from "./lib/ai-worker";
 
 const rawPort = process.env["PORT"];
 
@@ -25,6 +26,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  startAiWorker();
   void db.select({ id: importJobsTable.id }).from(importJobsTable)
     .where(inArray(importJobsTable.status, ["scanning", "importing"]))
     .then(async (jobs) => {
