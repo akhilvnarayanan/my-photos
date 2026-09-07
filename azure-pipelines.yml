@@ -1,0 +1,29 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '24.x'
+
+  - script: |
+      corepack enable
+      corepack prepare pnpm@11.25.0 --activate
+      pnpm install --frozen-lockfile
+    displayName: Install dependencies
+
+  - script: |
+      pnpm -r build
+    displayName: Build application
