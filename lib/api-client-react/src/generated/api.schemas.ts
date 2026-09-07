@@ -260,6 +260,9 @@ export interface AiWorkerStatus {
   lastHeartbeat: string | null;
   /** @nullable */
   currentJobId: string | null;
+  activeJobs: number;
+  /** @nullable */
+  lastError: string | null;
 }
 
 export type AiSettingsProcessingPriority = typeof AiSettingsProcessingPriority[keyof typeof AiSettingsProcessingPriority];

@@ -52,8 +52,8 @@ My Photos is a private, self-hosted Google Takeout photo library with local orig
 
 ## Current product direction
 
-- AI processing is being added as a local-only, durable background queue. Original photos must never be sent to external AI services.
-- The current implementation is Phase 1: queue infrastructure, persisted settings, worker status, backfill, pause/resume, and retry controls. Feature processors are added in later phases.
+- AI processing is a local-only, durable background queue. Original photos and OCR text never leave the server.
+- Local Tesseract OCR is implemented for photos with persisted text, confidence, language, retryable jobs, backfill, pause/resume, and searchable results. Videos and unsupported image formats are skipped.
 
 ## Gotchas
 

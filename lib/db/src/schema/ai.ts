@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, real, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -47,6 +47,23 @@ export const aiSettingsTable = pgTable("ai_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const photoTextTable = pgTable(
+  "photo_text",
+  {
+    photoId: text("photo_id").primaryKey(),
+    userId: text("user_id").notNull(),
+    text: text("text").notNull().default(""),
+    confidence: real("confidence"),
+    language: text("language").notNull().default("eng"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("photo_text_user_idx").on(table.userId),
+    textIdx: index("photo_text_text_idx").on(table.text),
+  }),
+);
+
 export const insertAiJobSchema = createInsertSchema(aiJobsTable).omit({
   createdAt: true,
   updatedAt: true,
@@ -54,3 +71,4 @@ export const insertAiJobSchema = createInsertSchema(aiJobsTable).omit({
 export type InsertAiJob = z.infer<typeof insertAiJobSchema>;
 export type AiJobRecord = typeof aiJobsTable.$inferSelect;
 export type AiSettingsRecord = typeof aiSettingsTable.$inferSelect;
+export type PhotoTextRecord = typeof photoTextTable.$inferSelect;

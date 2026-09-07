@@ -840,7 +840,9 @@ components:
           enum: [running, stopped, unavailable]
         lastHeartbeat: { type: ["string", "null"], format: date-time }
         currentJobId: { type: ["string", "null"] }
-      required: [status, lastHeartbeat, currentJobId]
+        activeJobs: { type: number }
+        lastError: { type: ["string", "null"] }
+      required: [status, lastHeartbeat, currentJobId, activeJobs, lastError]
     AiSettings:
       type: object
       properties:

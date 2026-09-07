@@ -1,6 +1,6 @@
 FROM node:24-alpine
 
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg tesseract-ocr tesseract-ocr-data-eng
 RUN corepack enable
 WORKDIR /app
 

@@ -804,7 +804,9 @@ export const GetAiStatusResponse = zod.object({
   "worker": zod.object({
   "status": zod.enum(['running', 'stopped', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
-  "currentJobId": zod.string().nullable()
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
   "queued": zod.number(),
@@ -862,7 +864,9 @@ export const UpdateAiSettingsResponse = zod.object({
   "worker": zod.object({
   "status": zod.enum(['running', 'stopped', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
-  "currentJobId": zod.string().nullable()
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
   "queued": zod.number(),
@@ -916,7 +920,9 @@ export const PauseAiProcessingResponse = zod.object({
   "worker": zod.object({
   "status": zod.enum(['running', 'stopped', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
-  "currentJobId": zod.string().nullable()
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
   "queued": zod.number(),
@@ -954,7 +960,9 @@ export const ResumeAiProcessingResponse = zod.object({
   "worker": zod.object({
   "status": zod.enum(['running', 'stopped', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
-  "currentJobId": zod.string().nullable()
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
   "queued": zod.number(),
