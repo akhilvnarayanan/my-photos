@@ -9,7 +9,7 @@ pr:
       - main
 
 pool:
-  vmImage: ubuntu-latest
+  name: MyPhotos-WSL
 
 steps:
   - checkout: self
