@@ -11,10 +11,6 @@ pr:
 pool:
   name: MyPhotos-WSL
 
-variables:
-  PORT: '25253'
-  BASE_PATH: '/'
-
 steps:
   - checkout: self
 
