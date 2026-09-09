@@ -39,6 +39,7 @@ import {
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 import {
   getGetImportQueryKey,
+  getGetAiStatusQueryKey,
   getGetPhotoQueryKey,
   getGetSessionQueryKey,
   getGetStatsQueryKey,
@@ -54,6 +55,7 @@ import {
   useDeletePhoto,
   useDownloadPhoto,
   useGetImport,
+  useGetAiStatus,
   useGetPhoto,
   useGetSession,
   useGetStats,
@@ -76,6 +78,11 @@ import {
   useToggleArchive,
   useUpdateAlbum,
   useHealthCheck,
+  useUpdateAiSettings,
+  useBackfillAiJobs,
+  useRetryFailedAiJobs,
+  usePauseAiProcessing,
+  useResumeAiProcessing,
   type Album,
   type ImportJob,
   type Photo,
@@ -467,13 +474,55 @@ function SettingsPage() {
   const statsQuery = useGetStats();
   const sessionQuery = useGetSession();
   const health = useHealthCheck();
+  const aiQuery = useGetAiStatus({ query: { refetchInterval: 3000, queryKey: getGetAiStatusQueryKey() } });
+  const updateAi = useUpdateAiSettings();
+  const backfill = useBackfillAiJobs();
+  const retryFailed = useRetryFailedAiJobs();
+  const pauseAi = usePauseAiProcessing();
+  const resumeAi = useResumeAiProcessing();
   const stats = statsQuery.data;
+  const ai = aiQuery.data;
+  const aiSettings = ai?.settings;
   const [autoOrganize, setAutoOrganize] = useState(true);
   const [rememberView, setRememberView] = useState(true);
-  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow="The quiet details" title="Settings" description="A few preferences for how your private library feels and behaves." /><div className="grid gap-6 lg:grid-cols-[1fr_1fr]"><div className="rounded-3xl border border-border bg-card p-6 md:p-8"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/30 text-accent"><Settings size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library preferences</h2></div><SettingRow label="Auto-organize imports" description="Group new moments by year after scanning." checked={autoOrganize} onChange={setAutoOrganize} testId="switch-auto-organize" /><SettingRow label="Remember last view" description="Open the library where you left it." checked={rememberView} onChange={setRememberView} testId="switch-remember-view" /><div className="mt-7 border-t border-border pt-6"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Signed in as</p><p className="mt-2 text-sm font-semibold text-primary" data-testid="text-settings-username">{sessionQuery.data?.username || 'local owner'}</p><div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><span className={cn('h-2 w-2 rounded-full', health.data?.status === 'ok' ? 'bg-chart-3' : 'bg-secondary')} />Library service {health.data?.status === 'ok' ? 'healthy' : 'connected'}</div></div></div><div className="rounded-3xl border border-border bg-card p-6 md:p-8"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent"><HardDrive size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library at a glance</h2></div>{statsQuery.isLoading ? <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7">{[1, 2, 3, 4].map((i) => <div key={i} className="h-12 animate-pulse rounded bg-muted" />)}</div> : statsQuery.isError ? <div className="mt-7"><ErrorState retry={() => statsQuery.refetch()} /></div> : <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7"><Stat label="Photographs" value={(stats?.totalPhotos || 0).toLocaleString()} /><Stat label="Videos" value={(stats?.totalVideos || 0).toLocaleString()} /><Stat label="Total files" value={(stats?.totalFiles || 0).toLocaleString()} /><Stat label="Favorites" value={(stats?.favoriteCount || 0).toLocaleString()} /><Stat label="Storage used" value={fmtBytes(stats?.totalStorageBytes)} /><Stat label="Duplicates skipped" value={(stats?.duplicateFiles || 0).toLocaleString()} /></div>}<div className="mt-8 border-t border-border pt-5"><p className="text-xs text-muted-foreground">Latest capture</p><p className="mt-1 font-serif text-lg italic text-primary" data-testid="text-latest-capture">{fmtDate(stats?.latestCaptureDate, 'short')}</p></div></div></div><div className="mt-6 rounded-2xl border border-secondary/30 bg-secondary/10 p-5"><div className="flex gap-3"><KeyRound className="mt-0.5 shrink-0 text-accent" size={17} /><div><h3 className="text-sm font-bold text-primary">Local password protection</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your account and library live on the same private server. There is no cloud account to sync or recover.</p></div></div></div></section>;
+  const refreshAi = () => queryClient.invalidateQueries({ queryKey: getGetAiStatusQueryKey() });
+  const patchAi = (data: Parameters<typeof updateAi.mutate>[0]['data']) => updateAi.mutate({ data }, { onSuccess: refreshAi });
+  const queueExisting = () => backfill.mutate(undefined, { onSuccess: refreshAi });
+  const retryExisting = () => retryFailed.mutate(undefined, { onSuccess: refreshAi });
+  const toggleProcessing = (checked: boolean) => patchAi({ processingEnabled: checked });
+  const toggleFeature = (key: 'ocrEnabled' | 'objectDetectionEnabled' | 'faceDetectionEnabled' | 'sceneRecognitionEnabled', checked: boolean) => patchAi({ [key]: checked });
+  return <section className="px-5 py-9 md:px-10 md:py-12">
+    <PageIntro eyebrow="The quiet details" title="Settings" description="A few preferences for how your private library feels and behaves." />
+    <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+      <div className="rounded-3xl border border-border bg-card p-6 md:p-8">
+        <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/30 text-accent"><Settings size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library preferences</h2></div>
+        <SettingRow label="Auto-organize imports" description="Group new moments by year after scanning." checked={autoOrganize} onChange={setAutoOrganize} testId="switch-auto-organize" />
+        <SettingRow label="Remember last view" description="Open the library where you left it." checked={rememberView} onChange={setRememberView} testId="switch-remember-view" />
+        <div className="mt-7 border-t border-border pt-6"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Signed in as</p><p className="mt-2 text-sm font-semibold text-primary" data-testid="text-settings-username">{sessionQuery.data?.username || 'local owner'}</p><div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><span className={cn('h-2 w-2 rounded-full', health.data?.status === 'ok' ? 'bg-chart-3' : 'bg-secondary')} />Library service {health.data?.status === 'ok' ? 'healthy' : 'connected'}</div></div>
+      </div>
+      <div className="rounded-3xl border border-border bg-card p-6 md:p-8">
+        <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent"><HardDrive size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library at a glance</h2></div>
+        {statsQuery.isLoading ? <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7">{[1, 2, 3, 4].map((i) => <div key={i} className="h-12 animate-pulse rounded bg-muted" />)}</div> : statsQuery.isError ? <div className="mt-7"><ErrorState retry={() => statsQuery.refetch()} /></div> : <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7"><Stat label="Photographs" value={(stats?.totalPhotos || 0).toLocaleString()} /><Stat label="Videos" value={(stats?.totalVideos || 0).toLocaleString()} /><Stat label="Total files" value={(stats?.totalFiles || 0).toLocaleString()} /><Stat label="Favorites" value={(stats?.favoriteCount || 0).toLocaleString()} /><Stat label="Storage used" value={fmtBytes(stats?.totalStorageBytes)} /><Stat label="Duplicates skipped" value={(stats?.duplicateFiles || 0).toLocaleString()} /></div>}
+        <div className="mt-8 border-t border-border pt-5"><p className="text-xs text-muted-foreground">Latest capture</p><p className="mt-1 font-serif text-lg italic text-primary" data-testid="text-latest-capture">{fmtDate(stats?.latestCaptureDate, 'short')}</p></div>
+      </div>
+    </div>
+    <div className="mt-6 rounded-3xl border border-border bg-card p-6 md:p-8">
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-start"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/30 text-accent"><Sparkles size={18} /></span><div><h2 className="font-serif text-2xl italic text-primary">AI processing</h2><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Local-only processing queue. Originals never leave this server.</p></div></div>{aiSettings && <div className="flex flex-wrap gap-2"><button onClick={queueExisting} disabled={backfill.isPending || !aiSettings.processingEnabled} className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground disabled:opacity-40" data-testid="button-process-existing-photos">{backfill.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}Process existing photos</button><button onClick={retryExisting} disabled={retryFailed.isPending || ai.failed === 0} className="inline-flex items-center gap-2 rounded-xl border border-accent/30 px-3 py-2 text-xs font-bold text-accent disabled:opacity-40" data-testid="button-retry-ai-failed">{retryFailed.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <CircleAlert size={14} />}Retry failed</button>{aiSettings.processingPaused ? <button onClick={() => resumeAi.mutate(undefined, { onSuccess: refreshAi })} disabled={resumeAi.isPending} className="inline-flex items-center gap-2 rounded-xl bg-secondary px-3 py-2 text-xs font-bold text-primary disabled:opacity-40" data-testid="button-resume-ai"><Play size={14} />Resume processing</button> : <button onClick={() => pauseAi.mutate(undefined, { onSuccess: refreshAi })} disabled={pauseAi.isPending} className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-bold text-primary disabled:opacity-40" data-testid="button-pause-ai"><Pause size={14} />Pause processing</button>}</div>}</div>
+       {aiQuery.isLoading ? <div className="mt-7 h-40 animate-pulse rounded-2xl bg-muted" /> : aiQuery.isError ? <div className="mt-7"><ErrorState retry={() => aiQuery.refetch()} /></div> : ai && aiSettings && <>
+         <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><AiStat label="Total jobs" value={ai.totalJobs} /><AiStat label="Queued" value={ai.queued} /><AiStat label="Processing" value={ai.processing} /><AiStat label="Completed" value={ai.completed} /><AiStat label="Failed" value={ai.failed} /></div>
+         <div className="mt-7"><div className="flex items-center justify-between gap-4 text-xs"><span className="font-semibold text-primary">Overall progress</span><span className="font-mono text-muted-foreground">{ai.overallProgress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-secondary transition-[width] duration-500" style={{ width: `${ai.overallProgress}%` }} /></div></div>
+         <div className="mt-7 grid gap-6 lg:grid-cols-2">
+           <div><SettingRow label="AI processing enabled" description="Allow enabled local features to create and process jobs." checked={aiSettings.processingEnabled} onChange={toggleProcessing} testId="switch-ai-processing" /><SettingRow label="OCR" description="Run local Tesseract text recognition for photos. Originals are never modified." checked={aiSettings.ocrEnabled} onChange={(checked) => toggleFeature('ocrEnabled', checked)} testId="switch-ai-ocr" /><SettingRow label="Object detection" description="Prepare local object tags for a later processing phase." checked={aiSettings.objectDetectionEnabled} onChange={(checked) => toggleFeature('objectDetectionEnabled', checked)} testId="switch-ai-objects" /><SettingRow label="Face detection" description="Detect anonymous faces without automatic identity matching." checked={aiSettings.faceDetectionEnabled} onChange={(checked) => toggleFeature('faceDetectionEnabled', checked)} testId="switch-ai-faces" /><SettingRow label="Scene recognition" description="Optional local scene classification, planned for a later phase." checked={aiSettings.sceneRecognitionEnabled} onChange={(checked) => toggleFeature('sceneRecognitionEnabled', checked)} testId="switch-ai-scenes" /></div>
+           <div className="rounded-2xl border border-border bg-background p-5"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Worker status</p><div className="mt-3 flex items-center gap-2 text-sm font-bold text-primary"><span className={cn('h-2.5 w-2.5 rounded-full', ai.worker.status === 'running' ? 'bg-chart-3' : ai.worker.status === 'unavailable' ? 'bg-destructive' : 'bg-accent')} />{ai.worker.status}</div><dl className="mt-5 space-y-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Current model</dt><dd className="text-right font-semibold text-primary">{ai.currentModel}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Active jobs</dt><dd className="text-right font-semibold text-primary">{ai.worker.activeJobs}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Last processed item</dt><dd className="max-w-[60%] truncate text-right font-semibold text-primary">{ai.lastProcessedItem || 'Not yet'}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Heartbeat</dt><dd className="text-right font-semibold text-primary">{ai.worker.lastHeartbeat ? fmtDate(ai.worker.lastHeartbeat, 'short') : 'Not available'}</dd></div></dl>{(ai.lastError || ai.worker.lastError) && <p className="mt-5 rounded-xl bg-destructive/10 p-3 text-xs leading-relaxed text-destructive">{ai.lastError || ai.worker.lastError}</p>}<p className="mt-5 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">OCR runs locally through Tesseract. Jobs are durable, retryable, and searchable without sending photos or text to external services.</p></div>
+         </div>
+       </>}
+    </div>
+    <div className="mt-6 rounded-2xl border border-secondary/30 bg-secondary/10 p-5"><div className="flex gap-3"><KeyRound className="mt-0.5 shrink-0 text-accent" size={17} /><div><h3 className="text-sm font-bold text-primary">Local password protection</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your account and library live on the same private server. There is no cloud account to sync or recover.</p></div></div></div>
+  </section>;
 }
 
 function SettingRow({ label, description, checked, onChange, testId }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void; testId: string }) { return <label className="mt-7 flex cursor-pointer items-start justify-between gap-4"><span><span className="block text-sm font-bold text-primary">{label}</span><span className="mt-1 block max-w-sm text-xs leading-relaxed text-muted-foreground">{description}</span></span><button type="button" onClick={() => onChange(!checked)} className={cn('relative mt-1 h-6 w-11 shrink-0 rounded-full transition-colors', checked ? 'bg-secondary' : 'bg-muted')} data-testid={testId} aria-pressed={checked}><span className={cn('absolute top-1 h-4 w-4 rounded-full bg-primary transition-transform', checked ? 'translate-x-6' : 'translate-x-1')} /></button></label>; }
+function AiStat({ label, value }: { label: string; value: number }) { return <div className="rounded-2xl border border-border bg-background p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-bold text-primary">{value.toLocaleString()}</p></div>; }
 
 function Login() {
   const [, setLocation] = useLocation();

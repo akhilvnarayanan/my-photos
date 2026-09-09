@@ -781,3 +781,199 @@ export const ListPlacesResponseItem = zod.object({
 export const ListPlacesResponse = zod.array(ListPlacesResponseItem)
 
 
+/**
+ * @summary Get local AI processing status and settings
+ */
+export const GetAiStatusResponse = zod.object({
+  "settings": zod.object({
+  "userId": zod.string(),
+  "processingEnabled": zod.boolean(),
+  "processingPaused": zod.boolean(),
+  "ocrEnabled": zod.boolean(),
+  "objectDetectionEnabled": zod.boolean(),
+  "faceDetectionEnabled": zod.boolean(),
+  "sceneRecognitionEnabled": zod.boolean(),
+  "maxConcurrency": zod.number(),
+  "processingPriority": zod.enum(['normal', 'low']),
+  "computeDevice": zod.enum(['auto', 'cpu', 'gpu']),
+  "visionModel": zod.string().nullable(),
+  "ocrLanguage": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "worker": zod.object({
+  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "lastHeartbeat": zod.coerce.date().nullable(),
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
+}),
+  "totalJobs": zod.number(),
+  "queued": zod.number(),
+  "processing": zod.number(),
+  "completed": zod.number(),
+  "failed": zod.number(),
+  "overallProgress": zod.number(),
+  "lastProcessedItem": zod.string().nullable(),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "currentModel": zod.string(),
+  "lastError": zod.string().nullable()
+})
+
+
+/**
+ * @summary Update local AI processing settings
+ */
+export const updateAiSettingsBodyMaxConcurrencyMax = 8;
+
+export const updateAiSettingsBodyOcrLanguageMin = 2;
+export const updateAiSettingsBodyOcrLanguageMax = 32;
+
+
+
+export const UpdateAiSettingsBody = zod.object({
+  "processingEnabled": zod.boolean().optional(),
+  "ocrEnabled": zod.boolean().optional(),
+  "objectDetectionEnabled": zod.boolean().optional(),
+  "faceDetectionEnabled": zod.boolean().optional(),
+  "sceneRecognitionEnabled": zod.boolean().optional(),
+  "maxConcurrency": zod.number().min(1).max(updateAiSettingsBodyMaxConcurrencyMax).optional(),
+  "processingPriority": zod.enum(['normal', 'low']).optional(),
+  "computeDevice": zod.enum(['auto', 'cpu', 'gpu']).optional(),
+  "visionModel": zod.string().nullish(),
+  "ocrLanguage": zod.string().min(updateAiSettingsBodyOcrLanguageMin).max(updateAiSettingsBodyOcrLanguageMax).optional()
+})
+
+export const UpdateAiSettingsResponse = zod.object({
+  "settings": zod.object({
+  "userId": zod.string(),
+  "processingEnabled": zod.boolean(),
+  "processingPaused": zod.boolean(),
+  "ocrEnabled": zod.boolean(),
+  "objectDetectionEnabled": zod.boolean(),
+  "faceDetectionEnabled": zod.boolean(),
+  "sceneRecognitionEnabled": zod.boolean(),
+  "maxConcurrency": zod.number(),
+  "processingPriority": zod.enum(['normal', 'low']),
+  "computeDevice": zod.enum(['auto', 'cpu', 'gpu']),
+  "visionModel": zod.string().nullable(),
+  "ocrLanguage": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "worker": zod.object({
+  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "lastHeartbeat": zod.coerce.date().nullable(),
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
+}),
+  "totalJobs": zod.number(),
+  "queued": zod.number(),
+  "processing": zod.number(),
+  "completed": zod.number(),
+  "failed": zod.number(),
+  "overallProgress": zod.number(),
+  "lastProcessedItem": zod.string().nullable(),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "currentModel": zod.string(),
+  "lastError": zod.string().nullable()
+})
+
+
+/**
+ * @summary Queue existing photos for enabled local AI features
+ */
+export const BackfillAiJobsResponse = zod.object({
+  "createdJobs": zod.number()
+})
+
+
+/**
+ * @summary Requeue failed local AI jobs
+ */
+export const RetryFailedAiJobsResponse = zod.object({
+  "retriedJobs": zod.number()
+})
+
+
+/**
+ * @summary Pause local AI processing
+ */
+export const PauseAiProcessingResponse = zod.object({
+  "settings": zod.object({
+  "userId": zod.string(),
+  "processingEnabled": zod.boolean(),
+  "processingPaused": zod.boolean(),
+  "ocrEnabled": zod.boolean(),
+  "objectDetectionEnabled": zod.boolean(),
+  "faceDetectionEnabled": zod.boolean(),
+  "sceneRecognitionEnabled": zod.boolean(),
+  "maxConcurrency": zod.number(),
+  "processingPriority": zod.enum(['normal', 'low']),
+  "computeDevice": zod.enum(['auto', 'cpu', 'gpu']),
+  "visionModel": zod.string().nullable(),
+  "ocrLanguage": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "worker": zod.object({
+  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "lastHeartbeat": zod.coerce.date().nullable(),
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
+}),
+  "totalJobs": zod.number(),
+  "queued": zod.number(),
+  "processing": zod.number(),
+  "completed": zod.number(),
+  "failed": zod.number(),
+  "overallProgress": zod.number(),
+  "lastProcessedItem": zod.string().nullable(),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "currentModel": zod.string(),
+  "lastError": zod.string().nullable()
+})
+
+
+/**
+ * @summary Resume local AI processing
+ */
+export const ResumeAiProcessingResponse = zod.object({
+  "settings": zod.object({
+  "userId": zod.string(),
+  "processingEnabled": zod.boolean(),
+  "processingPaused": zod.boolean(),
+  "ocrEnabled": zod.boolean(),
+  "objectDetectionEnabled": zod.boolean(),
+  "faceDetectionEnabled": zod.boolean(),
+  "sceneRecognitionEnabled": zod.boolean(),
+  "maxConcurrency": zod.number(),
+  "processingPriority": zod.enum(['normal', 'low']),
+  "computeDevice": zod.enum(['auto', 'cpu', 'gpu']),
+  "visionModel": zod.string().nullable(),
+  "ocrLanguage": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "worker": zod.object({
+  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "lastHeartbeat": zod.coerce.date().nullable(),
+  "currentJobId": zod.string().nullable(),
+  "activeJobs": zod.number(),
+  "lastError": zod.string().nullable()
+}),
+  "totalJobs": zod.number(),
+  "queued": zod.number(),
+  "processing": zod.number(),
+  "completed": zod.number(),
+  "failed": zod.number(),
+  "overallProgress": zod.number(),
+  "lastProcessedItem": zod.string().nullable(),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "currentModel": zod.string(),
+  "lastError": zod.string().nullable()
+})
+
+

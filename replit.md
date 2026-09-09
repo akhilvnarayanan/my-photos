@@ -50,9 +50,10 @@ My Photos is a private, self-hosted Google Takeout photo library with local orig
 - Archive moments without removing them from albums, and recover or permanently purge items through Trash
 - Keep the entire library local with configurable storage and Docker Compose support
 
-## User preferences
+## Current product direction
 
-The user asked for a real MVP and explicitly does not want AI features or external cloud photo storage.
+- AI processing is a local-only, durable background queue. Original photos and OCR text never leave the server.
+- Local Tesseract OCR is implemented for photos with persisted text, confidence, language, retryable jobs, backfill, pause/resume, and searchable results. Videos and unsupported image formats are skipped.
 
 ## Gotchas
 

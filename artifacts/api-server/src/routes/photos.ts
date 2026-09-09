@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from "drizzle-orm";
-import { db, albumPhotosTable, assetSourcesTable, photosTable } from "@workspace/db";
+import { db, albumPhotosTable, assetSourcesTable, photoTextTable, photosTable } from "@workspace/db";
 import { DeletePhotoParams, DownloadPhotoParams, GetPhotoParams, ListPhotosQueryParams, ListPhotosResponse, PermanentlyDeletePhotoParams, RestorePhotoParams, RestorePhotoResponse, ToggleArchiveBody, ToggleArchiveParams, ToggleArchiveResponse, ToggleFavoriteBody, ToggleFavoriteParams, ToggleFavoriteResponse } from "@workspace/api-zod";
 import { requireUser } from "../lib/auth";
 import {
@@ -33,6 +33,7 @@ router.get("/photos", async (req, res): Promise<void> => {
       ilike(photosTable.description, search),
       ilike(photosTable.cameraMake, search),
       ilike(photosTable.cameraModel, search),
+      sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and photo_text.text ilike ${search})`,
       sql`exists (select 1 from albums where albums.id in (select album_id from album_photos where album_photos.photo_id = ${photosTable.id}) and albums.user_id = ${userId} and albums.name ilike ${search})`,
     );
     if (searchFilter) filters.push(searchFilter);
@@ -245,6 +246,7 @@ router.delete("/photos/:photoId/permanent", async (req, res): Promise<void> => {
   }
   await db.delete(albumPhotosTable).where(eq(albumPhotosTable.photoId, photo.id));
   await db.delete(assetSourcesTable).where(eq(assetSourcesTable.assetId, photo.id));
+  await db.delete(photoTextTable).where(eq(photoTextTable.photoId, photo.id));
   await Promise.all([photo.originalPath, photo.thumbnailSmallPath, photo.thumbnailMediumPath].filter(Boolean).map((file) => fs.rm(file as string, { force: true })));
   res.sendStatus(204);
 });
@@ -256,6 +258,7 @@ router.delete("/trash", requireUser, async (_req, res): Promise<void> => {
   if (ids.length) {
     await db.delete(albumPhotosTable).where(inArray(albumPhotosTable.photoId, ids));
     await db.delete(assetSourcesTable).where(inArray(assetSourcesTable.assetId, ids));
+    await db.delete(photoTextTable).where(inArray(photoTextTable.photoId, ids));
   }
   await db.delete(photosTable).where(and(eq(photosTable.userId, res.locals.user.userId), eq(photosTable.isTrashed, true)));
   await Promise.all(trashed.flatMap((photo) => [photo.originalPath, photo.thumbnailSmallPath, photo.thumbnailMediumPath]).filter(Boolean).map((file) => fs.rm(file as string, { force: true })));
