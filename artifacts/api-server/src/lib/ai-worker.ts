@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { promisify } from "node:util";
-import { and, eq, sql } from "drizzle-orm";
-import { aiSettingsTable, db, photosTable } from "@workspace/db";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { aiSettingsTable, aiWorkerStatusTable, db, photosTable } from "@workspace/db";
 import type { AiJobRecord } from "@workspace/db";
 import { logger } from "./logger";
 import {
@@ -21,25 +21,77 @@ const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const OCR_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"]);
 
+export type WorkerStatusValue = "running" | "idle" | "stopped" | "stale" | "unavailable";
+
 type WorkerState = {
   status: "running" | "stopped" | "unavailable";
   lastHeartbeat: Date | null;
   currentJobId: string | null;
+  currentFeature: string | null;
+  currentPhotoId: string | null;
+  workerVersion: string;
   activeJobs: number;
+  jobsCompleted: number;
+  jobsFailed: number;
+  processingStartedAt: Date | null;
   lastError: string | null;
 };
+
+const WORKER_VERSION = process.env.AI_WORKER_VERSION ?? "local-tesseract-v1";
 
 const state: WorkerState = {
   status: "stopped",
   lastHeartbeat: null,
   currentJobId: null,
+  currentFeature: null,
+  currentPhotoId: null,
+  workerVersion: WORKER_VERSION,
   activeJobs: 0,
+  jobsCompleted: 0,
+  jobsFailed: 0,
+  processingStartedAt: null,
   lastError: null,
 };
 
 const activeJobs = new Set<string>();
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let polling = false;
+
+async function persistWorkerStatus(status: "running" | "idle" | "stopped" | "unavailable") {
+  await db.insert(aiWorkerStatusTable).values({
+    workerId: workerId(),
+    workerRole: process.env.AI_WORKER_ONLY === "true" ? "dedicated" : "api",
+    status,
+    heartbeatAt: new Date(),
+    currentJobId: state.currentJobId,
+    currentFeature: state.currentFeature,
+    currentPhotoId: state.currentPhotoId,
+    workerVersion: state.workerVersion,
+    activeJobs: state.activeJobs,
+    jobsCompleted: state.jobsCompleted,
+    jobsFailed: state.jobsFailed,
+    currentError: state.lastError,
+    processingStartedAt: state.processingStartedAt,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: aiWorkerStatusTable.workerId,
+    set: {
+      status,
+      workerRole: process.env.AI_WORKER_ONLY === "true" ? "dedicated" : "api",
+      heartbeatAt: new Date(),
+      currentJobId: state.currentJobId,
+      currentFeature: state.currentFeature,
+      currentPhotoId: state.currentPhotoId,
+      workerVersion: state.workerVersion,
+      activeJobs: state.activeJobs,
+      jobsCompleted: state.jobsCompleted,
+      jobsFailed: state.jobsFailed,
+      currentError: state.lastError,
+      processingStartedAt: state.processingStartedAt,
+      updatedAt: new Date(),
+    },
+  });
+}
 
 function envNumber(name: string, fallback: number, minimum: number) {
   const value = Number(process.env[name] ?? fallback);
@@ -127,6 +179,11 @@ async function getConcurrency() {
 
 async function processJob(job: AiJobRecord) {
   state.currentJobId = job.id;
+  state.currentFeature = job.feature;
+  state.currentPhotoId = job.photoId;
+  state.processingStartedAt = new Date();
+  await persistWorkerStatus("running");
+  let succeeded = false;
   try {
     const [photo] = await db.select({
       originalPath: photosTable.originalPath,
@@ -148,16 +205,23 @@ async function processJob(job: AiJobRecord) {
     try {
       const result = await runTesseract(input.filePath, language);
       await completeOcrJob(job, result.text, result.confidence, language);
+      state.lastError = null;
+      succeeded = true;
     } finally {
       await input.cleanup();
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     state.lastError = message.slice(0, 4000);
+    state.jobsFailed += 1;
     await failAiJob(job, message);
     logger.error({ err: error, jobId: job.id, photoId: job.photoId }, "OCR job failed");
   } finally {
+    if (succeeded) state.jobsCompleted += 1;
     state.currentJobId = null;
+    state.currentFeature = null;
+    state.currentPhotoId = null;
+    state.processingStartedAt = null;
   }
 }
 
@@ -165,6 +229,7 @@ async function poll() {
   if (polling || state.status !== "running") return;
   polling = true;
   state.lastHeartbeat = new Date();
+  await persistWorkerStatus("running");
   try {
     await recoverStaleAiJobs();
     const concurrency = await getConcurrency();
@@ -173,14 +238,17 @@ async function poll() {
       if (!job) break;
       activeJobs.add(job.id);
       state.activeJobs = activeJobs.size;
-      void processJob(job).finally(() => {
+      void processJob(job).finally(async () => {
         activeJobs.delete(job.id);
         state.activeJobs = activeJobs.size;
+        await persistWorkerStatus(activeJobs.size ? "running" : "idle");
       });
     }
+    if (!activeJobs.size) await persistWorkerStatus("idle");
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : String(error);
     logger.error({ err: error }, "AI worker poll failed");
+    await persistWorkerStatus("running");
   } finally {
     state.lastHeartbeat = new Date();
     state.activeJobs = activeJobs.size;
@@ -192,16 +260,55 @@ export function getAiWorkerState(): WorkerState {
   return { ...state };
 }
 
+export async function getDedicatedWorkerStatus() {
+  const [row] = await db.select().from(aiWorkerStatusTable)
+    .where(eq(aiWorkerStatusTable.workerRole, "dedicated"))
+    .orderBy(desc(aiWorkerStatusTable.heartbeatAt))
+    .limit(1);
+  if (!row) {
+    return {
+      status: "unavailable" as WorkerStatusValue,
+      lastHeartbeat: null,
+      currentJobId: null,
+      currentFeature: null,
+      currentPhotoId: null,
+      workerVersion: null,
+      activeJobs: 0,
+      jobsCompleted: 0,
+      jobsFailed: 0,
+      processingStartedAt: null,
+      lastError: null,
+    };
+  }
+  const staleAfter = Math.max(10_000, envNumber("AI_WORKER_POLL_MS", DEFAULT_POLL_MS, 250) * 3);
+  const isStale = !row.heartbeatAt || Date.now() - row.heartbeatAt.getTime() > staleAfter;
+  return {
+    status: (isStale ? "stale" : row.status) as WorkerStatusValue,
+    lastHeartbeat: row.heartbeatAt,
+    currentJobId: row.currentJobId,
+    currentFeature: row.currentFeature,
+    currentPhotoId: row.currentPhotoId,
+    workerVersion: row.workerVersion,
+    activeJobs: row.activeJobs,
+    jobsCompleted: row.jobsCompleted,
+    jobsFailed: row.jobsFailed,
+    processingStartedAt: row.processingStartedAt,
+    lastError: row.currentError,
+  };
+}
+
 export function startAiWorker() {
   if (heartbeatTimer) return;
   if (process.env.AI_WORKER_DISABLED === "true") {
     state.status = "unavailable";
     state.lastHeartbeat = new Date();
+    void persistWorkerStatus("unavailable").catch((error) => logger.error({ error }, "Failed to persist disabled worker status"));
     logger.info("AI worker disabled by configuration");
     return;
   }
   state.status = "running";
   state.lastHeartbeat = new Date();
+  void persistWorkerStatus("running").catch((error) => logger.error({ error }, "Failed to persist worker status"));
   void poll();
   heartbeatTimer = setInterval(() => void poll(), envNumber("AI_WORKER_POLL_MS", DEFAULT_POLL_MS, 250));
   if (process.env.AI_WORKER_ONLY !== "true") heartbeatTimer.unref();

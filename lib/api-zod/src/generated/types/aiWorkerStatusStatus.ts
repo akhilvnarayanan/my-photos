@@ -11,6 +11,8 @@ export type AiWorkerStatusStatus = typeof AiWorkerStatusStatus[keyof typeof AiWo
 
 export const AiWorkerStatusStatus = {
   running: 'running',
+  idle: 'idle',
   stopped: 'stopped',
+  stale: 'stale',
   unavailable: 'unavailable',
 } as const;

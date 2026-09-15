@@ -13,6 +13,17 @@ services:
       timeout: 5s
       retries: 10
 
+  db-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["pnpm", "--filter", "@workspace/db", "run", "migrate"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -29,6 +40,8 @@ services:
       - ${PHOTO_STORAGE_HOST_PATH:?Set PHOTO_STORAGE_HOST_PATH in .env}:/photos
       - ${PHOTO_IMPORT_HOST_PATH:?Set PHOTO_IMPORT_HOST_PATH in .env}:/imports:ro
     depends_on:
+      db-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:
@@ -55,6 +68,8 @@ services:
     volumes:
       - ${PHOTO_STORAGE_HOST_PATH:?Set PHOTO_STORAGE_HOST_PATH in .env}:/photos
     depends_on:
+      db-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
@@ -68,7 +83,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
       interval: 10s
       timeout: 5s
       retries: 5

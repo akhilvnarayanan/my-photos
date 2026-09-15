@@ -202,10 +202,16 @@ export async function failAiJob(job: AiJobRecord, error: string) {
 }
 
 export async function getAiStatus(userId: string, worker: {
-  status: "running" | "stopped" | "unavailable";
+  status: "running" | "idle" | "stopped" | "stale" | "unavailable";
   lastHeartbeat: Date | null;
   currentJobId: string | null;
+  currentFeature: string | null;
+  currentPhotoId: string | null;
+  workerVersion: string | null;
   activeJobs: number;
+  jobsCompleted: number;
+  jobsFailed: number;
+  processingStartedAt: Date | null;
   lastError: string | null;
 }) {
   const settings = await ensureAiSettings(userId);

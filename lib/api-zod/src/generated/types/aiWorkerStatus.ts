@@ -13,7 +13,17 @@ export interface AiWorkerStatus {
   lastHeartbeat: Date | null;
   /** @nullable */
   currentJobId: string | null;
+  /** @nullable */
+  currentFeature: string | null;
+  /** @nullable */
+  currentPhotoId: string | null;
+  /** @nullable */
+  workerVersion: string | null;
   activeJobs: number;
+  jobsCompleted: number;
+  jobsFailed: number;
+  /** @nullable */
+  processingStartedAt: Date | null;
   /** @nullable */
   lastError: string | null;
 }

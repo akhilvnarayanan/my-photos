@@ -8,13 +8,13 @@ import {
   retryFailedAiJobs,
   updateAiSettings,
 } from "../lib/ai-jobs";
-import { getAiWorkerState } from "../lib/ai-worker";
+import { getDedicatedWorkerStatus } from "../lib/ai-worker";
 
 const router: IRouter = Router();
 router.use(requireUser);
 
 async function sendStatus(userId: string, res: Response) {
-  res.json(await getAiStatus(userId, getAiWorkerState()));
+  res.json(await getAiStatus(userId, await getDedicatedWorkerStatus()));
 }
 
 router.get("/ai/status", async (_req, res): Promise<void> => {
