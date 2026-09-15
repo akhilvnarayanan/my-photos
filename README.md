@@ -90,15 +90,25 @@ PHOTO_STORAGE_PATH/
 
 The API never exposes this directory as a static public folder. Media is delivered only through authenticated photo routes.
 
-## PostgreSQL
+## PostgreSQL and migrations
 
-The current workspace uses Drizzle ORM. Push the development schema after changing `lib/db/src/schema/`:
+The current workspace uses Drizzle ORM with versioned migrations. The Compose `db-migrate` service waits for PostgreSQL health and applies pending migrations before the API or AI worker starts. Existing databases are upgraded additively; photos, OCR rows, and volumes are not reset.
+
+Generate a migration after changing `lib/db/src/schema/`:
 
 ```bash
-pnpm --filter @workspace/db run push
+pnpm --filter @workspace/db run generate
 ```
 
-The main tables are users, sessions, photos, albums, album photos, import jobs, import files, and asset sources. Changes are pushed to the development database without resetting existing records.
+Apply migrations to an existing or fresh database:
+
+```bash
+pnpm --filter @workspace/db run migrate
+```
+
+For Docker deployments, use `docker compose up -d --build`. A fresh database is initialized by the same migration set. The old `push` script remains available for development-only experiments, but is not used by Compose.
+
+The main tables are users, sessions, photos, albums, album photos, import jobs, import files, asset sources, AI jobs/settings, OCR text, and worker status. The timeline uses stable capture-date/ID cursors and targeted user/filter indexes. OCR keeps a simple-token GIN index plus substring compatibility matching.
 
 ## Docker Compose
 
@@ -134,6 +144,10 @@ pnpm --filter @workspace/api-server run typecheck
 pnpm --filter @workspace/my-photos run typecheck
 ```
 
+The photo list contract supports `cursor`, `nextCursor`, `hasMore`, text search, camera/lens, dates, location, album, media type, favorite, archive, trash, and source filters. The Photos timeline loads additional pages with an intersection observer and keeps each filter set in its own React Query key.
+
+There is currently no committed automated test suite; test infrastructure and deterministic API/frontend coverage are the next required foundation task before expanding search or AI features.
+
 ## Production builds
 
 ```bash
@@ -154,6 +168,10 @@ rsync -a --delete "$PHOTO_STORAGE_PATH/" /backup/my-photos-storage/
 
 After a restart, unfinished scans and imports are detected from the database and resumed. A partial original copy is verified by size and SHA-256 before reuse. The source HDD or Takeout extraction is never changed by recovery.
 
-## Deliberate non-goals
+## Implemented now
+
+Controlled schema migrations, database-backed dedicated-worker heartbeats with stale detection, Docker HTTP health checks, cursor-based timeline pagination, structured photo filters, and local OCR search are implemented.
+
+## Deliberate non-goals and planned future features
 
 The MVP does not upload originals to external cloud services and does not include AI search, face recognition, sharing links, cloud sync, photo editing, stories, or automatic memories.
