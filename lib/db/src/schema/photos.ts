@@ -55,6 +55,9 @@ export const photosTable = pgTable(
     archivedIdx: index("photos_archived_idx").on(table.isArchived),
     trashedIdx: index("photos_trashed_idx").on(table.isTrashed),
     userCaptureDateIdx: index("photos_user_capture_date_idx").on(table.userId, table.captureDate),
+    userTimelineIdx: index("photos_user_timeline_idx").on(table.userId, table.isTrashed, table.isArchived, table.captureDate, table.id),
+    userMediaTypeIdx: index("photos_user_media_type_idx").on(table.userId, table.mediaType),
+    userFavoriteIdx: index("photos_user_favorite_idx").on(table.userId, table.isFavorite),
     userHashIdx: uniqueIndex("photos_user_hash_unique").on(table.userId, table.hash),
   }),
 );

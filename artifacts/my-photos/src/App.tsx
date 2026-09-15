@@ -1,5 +1,5 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { QueryClient, QueryClientProvider, useInfiniteQuery } from '@tanstack/react-query';
 import {
   Archive,
   Check,
@@ -47,6 +47,7 @@ import {
   getListImportsQueryKey,
   getListPhotosQueryKey,
   getDownloadPhotoQueryKey,
+  listPhotos,
   useAddPhotosToAlbum,
   useCancelImport,
   useConfirmImport,
@@ -85,6 +86,7 @@ import {
   useResumeAiProcessing,
   type Album,
   type ImportJob,
+  type ListPhotosParams,
   type Photo,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -198,8 +200,8 @@ function PageIntro({ eyebrow, title, description, action }: { eyebrow: string; t
   return <div className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-end"><div><p className="mb-3 font-mono text-[10px] uppercase tracking-[.22em] text-accent" data-testid={`text-eyebrow-${eyebrow.toLowerCase().replaceAll(' ', '-')}`}>{eyebrow}</p><h1 className="font-serif text-4xl italic tracking-tight text-primary md:text-[48px]" data-testid={`heading-${title.toLowerCase().replaceAll(' ', '-')}`}>{title}</h1>{description && <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">{description}</p>}</div>{action}</div>;
 }
 
-function Toolbar({ query, setQuery, filter, setFilter }: { query: string; setQuery: (v: string) => void; filter: string; setFilter: (v: string) => void }) {
-  return <div className="mb-8 flex flex-col gap-3 sm:flex-row"><label className="relative flex-1"><Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search your archive" className="h-12 w-full rounded-xl border border-border bg-card pl-11 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-secondary" data-testid="input-search-photos" /></label><div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1"><button onClick={() => setFilter('all')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-all"><LayoutGrid size={14} />All</button><button onClick={() => setFilter('photo')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'photo' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-photos"><ImageIcon size={14} />Photos</button><button onClick={() => setFilter('video')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'video' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-videos"><Video size={14} />Video</button></div></div>;
+function Toolbar({ query, setQuery, filter, setFilter, cameraMake, setCameraMake, lens, setLens, from, setFrom, to, setTo, albumId, setAlbumId, albums }: { query: string; setQuery: (v: string) => void; filter: string; setFilter: (v: string) => void; cameraMake: string; setCameraMake: (v: string) => void; lens: string; setLens: (v: string) => void; from: string; setFrom: (v: string) => void; to: string; setTo: (v: string) => void; albumId: string; setAlbumId: (v: string) => void; albums: Album[] }) {
+  return <div className="mb-8 space-y-3"><div className="flex flex-col gap-3 sm:flex-row"><label className="relative flex-1"><Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search your archive" className="h-12 w-full rounded-xl border border-border bg-card pl-11 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-secondary" data-testid="input-search-photos" /></label><div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1"><button onClick={() => setFilter('all')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-all"><LayoutGrid size={14} />All</button><button onClick={() => setFilter('photo')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'photo' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-photos"><ImageIcon size={14} />Photos</button><button onClick={() => setFilter('video')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'video' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-videos"><Video size={14} />Video</button></div></div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5"><input value={cameraMake} onChange={(e) => setCameraMake(e.target.value)} placeholder="Camera make" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-camera" /><input value={lens} onChange={(e) => setLens(e.target.value)} placeholder="Lens" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-lens" /><select value={albumId} onChange={(e) => setAlbumId(e.target.value)} className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="select-filter-album"><option value="">All albums</option>{albums.map((album) => <option key={album.id} value={album.id}>{album.name}</option>)}</select><input value={from} onChange={(e) => setFrom(e.target.value)} type="date" aria-label="From date" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-from" /><input value={to} onChange={(e) => setTo(e.target.value)} type="date" aria-label="To date" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-to" /></div></div>;
 }
 
 function MediaCard({ photo, onOpen, onFavorite, onArchive, pending, archivePending }: { photo: Photo; onOpen: (photo: Photo) => void; onFavorite: (photo: Photo) => void; onArchive?: (photo: Photo) => void; pending?: boolean; archivePending?: boolean }) {
@@ -281,20 +283,59 @@ function Viewer({ photo, onClose, onFavorite, onArchive, onNext, onPrevious, onD
 function Timeline({ favoritesOnly = false, archivedOnly = false }: { favoritesOnly?: boolean; archivedOnly?: boolean }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [cameraMake, setCameraMake] = useState('');
+  const [lens, setLens] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [albumId, setAlbumId] = useState('');
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [favPending, setFavPending] = useState<string | null>(null);
-   const params = useMemo(() => ({ limit: 100, ...(query ? { query } : {}), ...(filter !== 'all' ? { mediaType: filter as 'photo' | 'video' } : {}), ...(favoritesOnly ? { favorite: true } : {}), ...(archivedOnly ? { archived: true } : {}) }), [archivedOnly, favoritesOnly, filter, query]);
-  const photosQuery = useListPhotos(params);
+   const params = useMemo<ListPhotosParams>(() => ({
+     limit: 100,
+     ...(query ? { query } : {}),
+    ...(cameraMake ? { cameraMake } : {}),
+    ...(lens ? { lens } : {}),
+    ...(from ? { from: new Date(`${from}T00:00:00.000Z`) } : {}),
+    ...(to ? { to: new Date(`${to}T23:59:59.999Z`) } : {}),
+    ...(albumId ? { albumId } : {}),
+     ...(filter !== 'all' ? { mediaType: filter as 'photo' | 'video' } : {}),
+     ...(favoritesOnly ? { favorite: true } : {}),
+     ...(archivedOnly ? { archived: true } : {}),
+   }), [archivedOnly, favoritesOnly, filter, query]);
+  const albumsQuery = useListAlbums();
+  const photosQuery = useInfiniteQuery({
+    queryKey: getListPhotosQueryKey(params),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => listPhotos({ ...params, ...(pageParam ? { cursor: pageParam } : {}) }, { signal }),
+    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined,
+  });
   const toggle = useToggleFavorite();
    const archive = useToggleArchive();
   const deleteMutation = useDeletePhoto();
-  const items = photosQuery.data?.items || [];
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    return (photosQuery.data?.pages.flatMap((page) => page.items) ?? []).filter((photo) => {
+      if (seen.has(photo.id)) return false;
+      seen.add(photo.id);
+      return true;
+    });
+  }, [photosQuery.data]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !photosQuery.hasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !photosQuery.isFetchingNextPage) void photosQuery.fetchNextPage();
+    }, { rootMargin: '600px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [photosQuery.fetchNextPage, photosQuery.hasNextPage, photosQuery.isFetchingNextPage]);
    const favorite = (photo: Photo) => { setFavPending(photo.id); toggle.mutate({ photoId: photo.id, data: { isFavorite: !photo.isFavorite } }, { onSettled: () => setFavPending(null), onSuccess: () => queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey(params) }) }); };
    const toggleArchive = (photo: Photo) => { archive.mutate({ photoId: photo.id, data: { isArchived: !photo.isArchived } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey(params) }); queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey() }); } }); };
    const deletePhoto = (photo: Photo) => { if (window.confirm(`Move “${photo.filename}” to Trash? You can restore it later.`)) deleteMutation.mutate({ photoId: photo.id }, { onSuccess: () => { setViewerIndex(null); queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() }); } }); };
   const grouped = useMemo(() => items.reduce<Record<string, Photo[]>>((acc, photo) => { const key = new Date(photo.captureDate).getFullYear().toString(); (acc[key] ||= []).push(photo); return acc; }, {}), [items]);
-   return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow={favoritesOnly ? 'A small constellation' : archivedOnly ? 'Set aside, still safe' : 'Your archive'} title={favoritesOnly ? 'Favorites' : archivedOnly ? 'Archive' : 'All moments'} description={favoritesOnly ? 'The photographs you have marked to keep close.' : archivedOnly ? 'Moments tucked away from the main view, still searchable and still part of every album.' : 'A quiet, chronological view of the moments you chose to keep.'} /><Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} />
-     {photosQuery.isLoading ? <MediaSkeleton /> : photosQuery.isError ? <ErrorState retry={() => photosQuery.refetch()} /> : items.length === 0 ? <EmptyState icon={favoritesOnly ? Heart : archivedOnly ? Archive : Camera} title={favoritesOnly ? 'Nothing held close yet' : archivedOnly ? 'Your archive is clear' : query ? 'No matching moments' : 'Your archive is still empty'} description={favoritesOnly ? 'Tap the heart on any photograph to gather your favorites here.' : archivedOnly ? 'Archived moments remain safe and can be brought back whenever you need them.' : query ? 'Try a different filename, place, or date.' : 'Start with a Google Takeout archive and make this space yours.'} action={!favoritesOnly && !archivedOnly && <Link href="/import" className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground" data-testid="link-empty-import"><Upload size={15} />Import your archive</Link>} /> : <>{Object.entries(grouped).sort(([a], [b]) => Number(b) - Number(a)).map(([year, yearItems], groupIndex) => <div key={year} className={cn('animate-drift mb-10', `stagger-${Math.min(groupIndex + 1, 4)}`)}><div className="mb-4 flex items-center gap-4"><h2 className="font-mono text-[11px] font-medium tracking-[.18em] text-muted-foreground" data-testid={`heading-year-${year}`}>{year}</h2><span className="h-px flex-1 bg-border" /><span className="font-mono text-[10px] text-muted-foreground/60">{yearItems.length} {yearItems.length === 1 ? 'moment' : 'moments'}</span></div><div className="photo-grid">{yearItems.map((photo) => <MediaCard key={photo.id} photo={photo} onOpen={() => setViewerIndex(items.findIndex((item) => item.id === photo.id))} onFavorite={favorite} onArchive={toggleArchive} archivePending={archive.isPending && archive.variables?.photoId === photo.id} pending={favPending === photo.id} />)}</div></div>)}</>}
+  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow={favoritesOnly ? 'A small constellation' : archivedOnly ? 'Set aside, still safe' : 'Your archive'} title={favoritesOnly ? 'Favorites' : archivedOnly ? 'Archive' : 'All moments'} description={favoritesOnly ? 'The photographs you have marked to keep close.' : archivedOnly ? 'Moments tucked away from the main view, still searchable and still part of every album.' : 'A quiet, chronological view of the moments you chose to keep.'} /><Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} cameraMake={cameraMake} setCameraMake={setCameraMake} lens={lens} setLens={setLens} from={from} setFrom={setFrom} to={to} setTo={setTo} albumId={albumId} setAlbumId={setAlbumId} albums={albumsQuery.data ?? []} />
+    {photosQuery.isLoading ? <MediaSkeleton /> : photosQuery.isError ? <ErrorState retry={() => photosQuery.refetch()} /> : items.length === 0 ? <EmptyState icon={favoritesOnly ? Heart : archivedOnly ? Archive : Camera} title={favoritesOnly ? 'Nothing held close yet' : archivedOnly ? 'Your archive is clear' : query ? 'No matching moments' : 'Your archive is still empty'} description={favoritesOnly ? 'Tap the heart on any photograph to gather your favorites here.' : archivedOnly ? 'Archived moments remain safe and can be brought back whenever you need them.' : query ? 'Try a different filename, place, or date.' : 'Start with a Google Takeout archive and make this space yours.'} action={!favoritesOnly && !archivedOnly && <Link href="/import" className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground" data-testid="link-empty-import"><Upload size={15} />Import your archive</Link>} /> : <>{Object.entries(grouped).sort(([a], [b]) => Number(b) - Number(a)).map(([year, yearItems], groupIndex) => <div key={year} className={cn('animate-drift mb-10', `stagger-${Math.min(groupIndex + 1, 4)}`)}><div className="mb-4 flex items-center gap-4"><h2 className="font-mono text-[11px] font-medium tracking-[.18em] text-muted-foreground" data-testid={`heading-year-${year}`}>{year}</h2><span className="h-px flex-1 bg-border" /><span className="font-mono text-[10px] text-muted-foreground/60">{yearItems.length} {yearItems.length === 1 ? 'moment' : 'moments'}</span></div><div className="photo-grid">{yearItems.map((photo) => <MediaCard key={photo.id} photo={photo} onOpen={() => setViewerIndex(items.findIndex((item) => item.id === photo.id))} onFavorite={favorite} onArchive={toggleArchive} archivePending={archive.isPending && archive.variables?.photoId === photo.id} pending={favPending === photo.id} />)}</div></div>)}<div ref={loadMoreRef} className="h-12">{photosQuery.isFetchingNextPage && <MediaSkeleton />}</div></>}
      {viewerIndex !== null && items[viewerIndex] && <Viewer photo={items[viewerIndex]} onClose={() => setViewerIndex(null)} onFavorite={favorite} onArchive={toggleArchive} onDelete={deletePhoto} isPending={favPending === items[viewerIndex].id} onPrevious={() => setViewerIndex((viewerIndex - 1 + items.length) % items.length)} onNext={() => setViewerIndex((viewerIndex + 1) % items.length)} />}
    </section>;
 }

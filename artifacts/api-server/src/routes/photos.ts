@@ -13,12 +13,18 @@ import {
   sourceInfoForPhotos,
 } from "../lib/media";
 import { promises as fs } from "node:fs";
+import { cursorForPhoto, escapeLike, parsePhotoCursor } from "../lib/search";
 
 const router: IRouter = Router();
 router.use("/photos", requireUser);
 
 router.get("/photos", async (req, res): Promise<void> => {
-  const parsed = ListPhotosQueryParams.safeParse(req.query);
+  const rawQuery = req.query as Record<string, unknown>;
+  const parsed = ListPhotosQueryParams.safeParse({
+    ...rawQuery,
+    from: rawQuery.from ? new Date(String(rawQuery.from)) : undefined,
+    to: rawQuery.to ? new Date(String(rawQuery.to)) : undefined,
+  });
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
@@ -27,17 +33,22 @@ router.get("/photos", async (req, res): Promise<void> => {
   const userId = res.locals.user.userId as string;
   const filters = [eq(photosTable.userId, userId)];
   if (query.query) {
-    const search = `%${query.query}%`;
+    const search = `%${escapeLike(query.query)}%`;
     const searchFilter = or(
-      ilike(photosTable.filename, search),
-      ilike(photosTable.description, search),
-      ilike(photosTable.cameraMake, search),
-      ilike(photosTable.cameraModel, search),
-      sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and photo_text.text ilike ${search})`,
-      sql`exists (select 1 from albums where albums.id in (select album_id from album_photos where album_photos.photo_id = ${photosTable.id}) and albums.user_id = ${userId} and albums.name ilike ${search})`,
+      sql`${photosTable.filename} ilike ${search} escape '\\'`,
+      sql`${photosTable.description} ilike ${search} escape '\\'`,
+      sql`${photosTable.cameraMake} ilike ${search} escape '\\'`,
+      sql`${photosTable.cameraModel} ilike ${search} escape '\\'`,
+      sql`${photosTable.lensModel} ilike ${search} escape '\\'`,
+      sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and photo_text.text ilike ${search} escape '\\')`,
+      sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and to_tsvector('simple', coalesce(photo_text.text, '')) @@ plainto_tsquery('simple', ${query.query}))`,
+      sql`exists (select 1 from albums where albums.id in (select album_id from album_photos where album_photos.photo_id = ${photosTable.id}) and albums.user_id = ${userId} and albums.name ilike ${search} escape '\\')`,
     );
     if (searchFilter) filters.push(searchFilter);
   }
+  if (query.cameraMake) filters.push(ilike(photosTable.cameraMake, `%${escapeLike(query.cameraMake)}%`));
+  if (query.cameraModel) filters.push(ilike(photosTable.cameraModel, `%${escapeLike(query.cameraModel)}%`));
+  if (query.lens) filters.push(ilike(photosTable.lensModel, `%${escapeLike(query.lens)}%`));
   if (query.mediaType !== "all") filters.push(eq(photosTable.mediaType, query.mediaType));
   if (query.favorite !== undefined) filters.push(eq(photosTable.isFavorite, query.favorite));
   filters.push(eq(photosTable.isTrashed, query.trashed ?? false));
@@ -57,18 +68,17 @@ router.get("/photos", async (req, res): Promise<void> => {
   }
   if (query.from) filters.push(gte(photosTable.captureDate, query.from));
   if (query.to) filters.push(lte(photosTable.captureDate, query.to));
+  if (query.latitude !== undefined) filters.push(sql`${photosTable.latitude} = ${query.latitude}`);
+  if (query.longitude !== undefined) filters.push(sql`${photosTable.longitude} = ${query.longitude}`);
   const countFilters = [...filters];
   if (query.cursor) {
-    const [cursorDateText, cursorId] = query.cursor.split("|");
-    const cursorDate = new Date(cursorDateText);
-    if (!Number.isNaN(cursorDate.getTime()) && cursorId) {
+    const cursor = parsePhotoCursor(query.cursor);
+    if (cursor) {
       const cursorFilter = or(
-        lt(photosTable.captureDate, cursorDate),
-        and(eq(photosTable.captureDate, cursorDate), lt(photosTable.id, cursorId)),
+        lt(photosTable.captureDate, cursor.captureDate),
+        and(eq(photosTable.captureDate, cursor.captureDate), lt(photosTable.id, cursor.id)),
       );
       if (cursorFilter) filters.push(cursorFilter);
-    } else if (!Number.isNaN(cursorDate.getTime())) {
-      filters.push(lt(photosTable.captureDate, cursorDate));
     }
   }
   if (query.albumId) filters.push(sql`exists (select 1 from album_photos where album_photos.album_id = ${query.albumId} and album_photos.photo_id = ${photosTable.id})`);
@@ -81,7 +91,8 @@ router.get("/photos", async (req, res): Promise<void> => {
   const [count] = await db.select({ count: sql<number>`count(*)` }).from(photosTable).where(and(...countFilters));
   const response = {
     items: pageRows.map((row) => mediaResponse(row, albumMap.get(row.id) ?? [], sourceMap.get(row.id) ?? [])),
-    nextCursor: hasNext ? `${pageRows.at(-1)?.captureDate.toISOString()}|${pageRows.at(-1)?.id}` : null,
+    nextCursor: hasNext ? cursorForPhoto(pageRows.at(-1)!.captureDate, pageRows.at(-1)!.id) : null,
+    hasMore: hasNext,
     total: Number(count?.count ?? 0),
   };
   res.json(ListPhotosResponse.parse(response));

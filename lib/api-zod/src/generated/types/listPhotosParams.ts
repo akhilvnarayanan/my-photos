@@ -18,6 +18,9 @@ cursor?: CursorParameter;
  */
 limit?: LimitParameter;
 query?: string;
+cameraMake?: string;
+cameraModel?: string;
+lens?: string;
 mediaType?: ListPhotosMediaType;
 favorite?: boolean;
 archived?: boolean;
@@ -32,4 +35,6 @@ year?: number;
 month?: number;
 from?: Date;
 to?: Date;
+latitude?: number;
+longitude?: number;
 };

@@ -78,6 +78,15 @@ paths:
           name: query
           schema: { type: string }
         - in: query
+          name: cameraMake
+          schema: { type: string }
+        - in: query
+          name: cameraModel
+          schema: { type: string }
+        - in: query
+          name: lens
+          schema: { type: string }
+        - in: query
           name: mediaType
           schema:
             type: string
@@ -112,6 +121,12 @@ paths:
         - in: query
           name: to
           schema: { type: string, format: date }
+        - in: query
+          name: latitude
+          schema: { type: number }
+        - in: query
+          name: longitude
+          schema: { type: number }
       responses:
         "200":
           description: A page of media
@@ -686,8 +701,9 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Photo" }
         nextCursor: { type: ["string", "null"] }
+        hasMore: { type: boolean }
         total: { type: number }
-      required: [items, nextCursor, total]
+      required: [items, nextCursor, hasMore, total]
     FavoriteInput:
       type: object
       properties:
@@ -837,12 +853,18 @@ components:
       properties:
         status:
           type: string
-          enum: [running, stopped, unavailable]
+          enum: [running, idle, stopped, stale, unavailable]
         lastHeartbeat: { type: ["string", "null"], format: date-time }
         currentJobId: { type: ["string", "null"] }
+        currentFeature: { type: ["string", "null"] }
+        currentPhotoId: { type: ["string", "null"] }
+        workerVersion: { type: ["string", "null"] }
         activeJobs: { type: number }
+        jobsCompleted: { type: number }
+        jobsFailed: { type: number }
+        processingStartedAt: { type: ["string", "null"], format: date-time }
         lastError: { type: ["string", "null"] }
-      required: [status, lastHeartbeat, currentJobId, activeJobs, lastError]
+      required: [status, lastHeartbeat, currentJobId, currentFeature, currentPhotoId, workerVersion, activeJobs, jobsCompleted, jobsFailed, processingStartedAt, lastError]
     AiSettings:
       type: object
       properties:

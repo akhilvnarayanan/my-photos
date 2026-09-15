@@ -64,6 +64,9 @@ export const ListPhotosQueryParams = zod.object({
   "cursor": zod.coerce.string().optional(),
   "limit": zod.coerce.number().min(1).max(listPhotosQueryLimitMax).default(listPhotosQueryLimitDefault),
   "query": zod.coerce.string().optional(),
+  "cameraMake": zod.coerce.string().optional(),
+  "cameraModel": zod.coerce.string().optional(),
+  "lens": zod.coerce.string().optional(),
   "mediaType": zod.enum(['all', 'photo', 'video']).default(listPhotosQueryMediaTypeDefault),
   "favorite": zod.coerce.boolean().optional(),
   "archived": zod.coerce.boolean().optional(),
@@ -73,7 +76,9 @@ export const ListPhotosQueryParams = zod.object({
   "year": zod.coerce.number().optional(),
   "month": zod.coerce.number().min(1).max(listPhotosQueryMonthMax).optional(),
   "from": zod.date().optional(),
-  "to": zod.date().optional()
+  "to": zod.date().optional(),
+  "latitude": zod.coerce.number().optional(),
+  "longitude": zod.coerce.number().optional()
 })
 
 export const ListPhotosResponse = zod.object({
@@ -110,6 +115,7 @@ export const ListPhotosResponse = zod.object({
 }))
 })),
   "nextCursor": zod.string().nullable(),
+  "hasMore": zod.boolean(),
   "total": zod.number()
 })
 
@@ -802,10 +808,16 @@ export const GetAiStatusResponse = zod.object({
   "updatedAt": zod.coerce.date()
 }),
   "worker": zod.object({
-  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "status": zod.enum(['running', 'idle', 'stopped', 'stale', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
   "currentJobId": zod.string().nullable(),
+  "currentFeature": zod.string().nullable(),
+  "currentPhotoId": zod.string().nullable(),
+  "workerVersion": zod.string().nullable(),
   "activeJobs": zod.number(),
+  "jobsCompleted": zod.number(),
+  "jobsFailed": zod.number(),
+  "processingStartedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
@@ -862,10 +874,16 @@ export const UpdateAiSettingsResponse = zod.object({
   "updatedAt": zod.coerce.date()
 }),
   "worker": zod.object({
-  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "status": zod.enum(['running', 'idle', 'stopped', 'stale', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
   "currentJobId": zod.string().nullable(),
+  "currentFeature": zod.string().nullable(),
+  "currentPhotoId": zod.string().nullable(),
+  "workerVersion": zod.string().nullable(),
   "activeJobs": zod.number(),
+  "jobsCompleted": zod.number(),
+  "jobsFailed": zod.number(),
+  "processingStartedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
@@ -918,10 +936,16 @@ export const PauseAiProcessingResponse = zod.object({
   "updatedAt": zod.coerce.date()
 }),
   "worker": zod.object({
-  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "status": zod.enum(['running', 'idle', 'stopped', 'stale', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
   "currentJobId": zod.string().nullable(),
+  "currentFeature": zod.string().nullable(),
+  "currentPhotoId": zod.string().nullable(),
+  "workerVersion": zod.string().nullable(),
   "activeJobs": zod.number(),
+  "jobsCompleted": zod.number(),
+  "jobsFailed": zod.number(),
+  "processingStartedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),
@@ -958,10 +982,16 @@ export const ResumeAiProcessingResponse = zod.object({
   "updatedAt": zod.coerce.date()
 }),
   "worker": zod.object({
-  "status": zod.enum(['running', 'stopped', 'unavailable']),
+  "status": zod.enum(['running', 'idle', 'stopped', 'stale', 'unavailable']),
   "lastHeartbeat": zod.coerce.date().nullable(),
   "currentJobId": zod.string().nullable(),
+  "currentFeature": zod.string().nullable(),
+  "currentPhotoId": zod.string().nullable(),
+  "workerVersion": zod.string().nullable(),
   "activeJobs": zod.number(),
+  "jobsCompleted": zod.number(),
+  "jobsFailed": zod.number(),
+  "processingStartedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable()
 }),
   "totalJobs": zod.number(),

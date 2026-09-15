@@ -104,6 +104,7 @@ export interface PhotoPage {
   items: Photo[];
   /** @nullable */
   nextCursor: string | null;
+  hasMore: boolean;
   total: number;
 }
 
@@ -250,7 +251,9 @@ export type AiWorkerStatusStatus = typeof AiWorkerStatusStatus[keyof typeof AiWo
 
 export const AiWorkerStatusStatus = {
   running: 'running',
+  idle: 'idle',
   stopped: 'stopped',
+  stale: 'stale',
   unavailable: 'unavailable',
 } as const;
 
@@ -260,7 +263,17 @@ export interface AiWorkerStatus {
   lastHeartbeat: string | null;
   /** @nullable */
   currentJobId: string | null;
+  /** @nullable */
+  currentFeature: string | null;
+  /** @nullable */
+  currentPhotoId: string | null;
+  /** @nullable */
+  workerVersion: string | null;
   activeJobs: number;
+  jobsCompleted: number;
+  jobsFailed: number;
+  /** @nullable */
+  processingStartedAt: string | null;
   /** @nullable */
   lastError: string | null;
 }
@@ -377,6 +390,9 @@ cursor?: CursorParameter;
  */
 limit?: LimitParameter;
 query?: string;
+cameraMake?: string;
+cameraModel?: string;
+lens?: string;
 mediaType?: ListPhotosMediaType;
 favorite?: boolean;
 archived?: boolean;
@@ -391,6 +407,8 @@ year?: number;
 month?: number;
 from?: string;
 to?: string;
+latitude?: number;
+longitude?: number;
 };
 
 export type ListPhotosMediaType = typeof ListPhotosMediaType[keyof typeof ListPhotosMediaType];
