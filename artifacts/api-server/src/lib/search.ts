@@ -1,5 +1,5 @@
 export function escapeLike(value: string) {
-  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+  return value.replace(/[!%_]/g, (character) => `!${character}`);
 }
 
 export function cursorForPhoto(captureDate: Date, id: string) {

@@ -3,7 +3,7 @@ import test from "node:test";
 import { appendUniqueById, cursorForPhoto, escapeLike, parsePhotoCursor } from "../../artifacts/api-server/src/lib/search";
 
 test("escapes SQL LIKE wildcards while preserving ordinary search text", () => {
-  assert.equal(escapeLike("board_50%"), "board\\_50\\%");
+  assert.equal(escapeLike("board_50%"), "board!_50!%");
 });
 
 test("photo cursors round-trip stable date and id ordering values", () => {

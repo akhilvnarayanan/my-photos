@@ -4,9 +4,11 @@ import { db, importJobsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { runImportJob, scanImportJob } from "./lib/importer";
 import { startAiWorker } from "./lib/ai-worker";
+import { startGeocodingWorker } from "./lib/geocoding";
 
 if (process.env.AI_WORKER_ONLY === "true") {
   startAiWorker();
+  startGeocodingWorker();
 } else {
   const rawPort = process.env["PORT"];
 
@@ -30,6 +32,7 @@ if (process.env.AI_WORKER_ONLY === "true") {
 
     logger.info({ port }, "Server listening");
     startAiWorker();
+    startGeocodingWorker();
     void db.select({ id: importJobsTable.id }).from(importJobsTable)
       .where(inArray(importJobsTable.status, ["scanning", "importing"]))
       .then(async (jobs) => {

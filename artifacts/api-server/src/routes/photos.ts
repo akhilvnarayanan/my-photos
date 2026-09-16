@@ -35,14 +35,14 @@ router.get("/photos", async (req, res): Promise<void> => {
   if (query.query) {
     const search = `%${escapeLike(query.query)}%`;
     const searchFilter = or(
-      sql`${photosTable.filename} ilike ${search} escape '\\'`,
-      sql`${photosTable.description} ilike ${search} escape '\\'`,
-      sql`${photosTable.cameraMake} ilike ${search} escape '\\'`,
-      sql`${photosTable.cameraModel} ilike ${search} escape '\\'`,
-      sql`${photosTable.lensModel} ilike ${search} escape '\\'`,
-      sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and photo_text.text ilike ${search} escape '\\')`,
+      sql`${photosTable.filename} ilike ${search} escape '!'`,
+      sql`${photosTable.description} ilike ${search} escape '!'`,
+      sql`${photosTable.cameraMake} ilike ${search} escape '!'`,
+      sql`${photosTable.cameraModel} ilike ${search} escape '!'`,
+      sql`${photosTable.lensModel} ilike ${search} escape '!'`,
+      sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and photo_text.text ilike ${search} escape '!')`,
       sql`exists (select 1 from photo_text where photo_text.photo_id = ${photosTable.id} and photo_text.user_id = ${userId} and to_tsvector('simple', coalesce(photo_text.text, '')) @@ plainto_tsquery('simple', ${query.query}))`,
-      sql`exists (select 1 from albums where albums.id in (select album_id from album_photos where album_photos.photo_id = ${photosTable.id}) and albums.user_id = ${userId} and albums.name ilike ${search} escape '\\')`,
+      sql`exists (select 1 from albums where albums.id in (select album_id from album_photos where album_photos.photo_id = ${photosTable.id}) and albums.user_id = ${userId} and albums.name ilike ${search} escape '!')`,
     );
     if (searchFilter) filters.push(searchFilter);
   }
@@ -70,6 +70,11 @@ router.get("/photos", async (req, res): Promise<void> => {
   if (query.to) filters.push(lte(photosTable.captureDate, query.to));
   if (query.latitude !== undefined) filters.push(sql`${photosTable.latitude} = ${query.latitude}`);
   if (query.longitude !== undefined) filters.push(sql`${photosTable.longitude} = ${query.longitude}`);
+  if (query.country) filters.push(sql`exists (select 1 from photo_places pp join places p on p.id = pp.place_id and p.user_id = ${userId} where pp.user_id = ${userId} and pp.photo_id = ${photosTable.id} and p.country ilike ${`%${escapeLike(query.country)}%`} escape '!')`);
+  if (query.state) filters.push(sql`exists (select 1 from photo_places pp join places p on p.id = pp.place_id and p.user_id = ${userId} where pp.user_id = ${userId} and pp.photo_id = ${photosTable.id} and p.state ilike ${`%${escapeLike(query.state)}%`} escape '!')`);
+  if (query.city) filters.push(sql`exists (select 1 from photo_places pp join places p on p.id = pp.place_id and p.user_id = ${userId} where pp.user_id = ${userId} and pp.photo_id = ${photosTable.id} and p.city ilike ${`%${escapeLike(query.city)}%`} escape '!')`);
+  if (query.locality) filters.push(sql`exists (select 1 from photo_places pp join places p on p.id = pp.place_id and p.user_id = ${userId} where pp.user_id = ${userId} and pp.photo_id = ${photosTable.id} and p.locality ilike ${`%${escapeLike(query.locality)}%`} escape '!')`);
+  if (query.place) filters.push(sql`exists (select 1 from photo_places pp join places p on p.id = pp.place_id and p.user_id = ${userId} where pp.user_id = ${userId} and pp.photo_id = ${photosTable.id} and (p.formatted_name ilike ${`%${escapeLike(query.place)}%`} escape '!' or p.landmark ilike ${`%${escapeLike(query.place)}%`} escape '!' or p.city ilike ${`%${escapeLike(query.place)}%`} escape '!' or p.state ilike ${`%${escapeLike(query.place)}%`} escape '!'))`);
   const countFilters = [...filters];
   if (query.cursor) {
     const cursor = parsePhotoCursor(query.cursor);

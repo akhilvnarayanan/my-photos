@@ -1,5 +1,8 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useInfiniteQuery } from '@tanstack/react-query';
+import L from 'leaflet';
+import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   Archive,
   Check,
@@ -110,6 +113,166 @@ const fmtBytes = (bytes = 0) => {
   return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 };
 const pct = (job?: ImportJob | null) => job?.totalFiles ? Math.min(100, Math.round((job.processedFiles / job.totalFiles) * 100)) : 0;
+
+type PlaceSummary = {
+  id: string;
+  label: string;
+  country?: string | null;
+  state?: string | null;
+  city?: string | null;
+  locality?: string | null;
+  district?: string | null;
+  landmark?: string | null;
+  placeType?: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  photoCount: number;
+  coverUrl: string | null;
+};
+
+type PlaceDetailRecord = PlaceSummary & {
+  geocodingStatus?: string | null;
+  geocoderProvider?: string | null;
+  geocoderVersion?: string | null;
+  geocodedAt?: string | null;
+  earliestPhotoDate?: string | null;
+  latestPhotoDate?: string | null;
+};
+
+type PlacePhotoPage = {
+  items: Array<{
+    id: string;
+    filename: string;
+    thumbnailUrl: string;
+    mediumUrl: string;
+    originalUrl: string;
+    captureDate: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    isFavorite: boolean;
+  }>;
+  nextCursor: string | null;
+  hasMore: boolean;
+  total: number;
+};
+
+type GeocodingStatusResponse = {
+  provider: string;
+  providerVersion: string;
+  enabled: boolean;
+  totalJobs: number;
+  queued: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  cacheEntries: number;
+  percentage: number;
+};
+
+async function fetchJson<T>(input: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(input, {
+    credentials: 'same-origin',
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed (${response.status}): ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function useGeocodingStatus() {
+  const [status, setStatus] = useState<GeocodingStatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const refresh = async () => {
+    try {
+      setStatus(await fetchJson<GeocodingStatusResponse>('/api/places/geocoding/status'));
+    } catch {
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void refresh();
+    const id = window.setInterval(() => { void refresh(); }, 6000);
+    return () => window.clearInterval(id);
+  }, []);
+  return { status, loading, refresh };
+}
+
+function PlaceMap({ places }: { places: Array<{ id: string; label: string; latitude: number | null; longitude: number | null; photoCount?: number }> }) {
+  const usable = places.filter((place) => place.latitude != null && place.longitude != null);
+  if (usable.length === 0) {
+    return <div className="flex h-[300px] items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">No GPS coordinates available for this place.</div>;
+  }
+
+  const avgLat = usable.reduce((sum, place) => sum + Number(place.latitude), 0) / usable.length;
+  const avgLng = usable.reduce((sum, place) => sum + Number(place.longitude), 0) / usable.length;
+  const clusters = usable.length > 20
+    ? usable.reduce<Map<string, { id: string; label: string; latitude: number; longitude: number; count: number }>>((acc, place) => {
+        const latKey = (Number(place.latitude) * 10).toFixed(0);
+        const lonKey = (Number(place.longitude) * 10).toFixed(0);
+        const key = `${latKey}:${lonKey}`;
+        const existing = acc.get(key);
+        if (existing) {
+          existing.count += 1;
+          existing.latitude = (existing.latitude * (existing.count - 1) + Number(place.latitude)) / existing.count;
+          existing.longitude = (existing.longitude * (existing.count - 1) + Number(place.longitude)) / existing.count;
+        } else {
+          acc.set(key, { id: place.id, label: place.label, latitude: Number(place.latitude), longitude: Number(place.longitude), count: 1 });
+        }
+        return acc;
+      }, new Map()).values()
+    : usable;
+
+  return (
+    <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <style>{`
+        .leaflet-container { height: 320px; width: 100%; background: hsl(var(--background)); }
+        .custom-cluster-marker { background: transparent; border: none; }
+        .custom-cluster-marker div {
+          display: flex; align-items: center; justify-content: center;
+          width: 32px; height: 32px; border-radius: 9999px;
+          background: linear-gradient(135deg, rgba(242, 120, 80, 0.96), rgba(255, 169, 92, 0.96));
+          color: white; font-size: 11px; font-weight: 700; box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+          border: 2px solid rgba(255,255,255,0.75);
+        }
+      `}</style>
+      <MapContainer center={[avgLat, avgLng]} zoom={usable.length > 2 ? 7 : 11} scrollWheelZoom className="h-[320px] w-full" attributionControl>
+        <TileLayer
+          attribution={mapAttribution}
+          url={mapTileUrl}
+        />
+        {[...clusters].map((place) => {
+          const count = 'count' in place ? place.count : 1;
+          const markerIcon = L.divIcon({
+            className: 'custom-cluster-marker',
+            html: `<div>${count}</div>`,
+            iconAnchor: [16, 16],
+            popupAnchor: [0, -12],
+          });
+          return (
+            <Marker key={`${place.id}-${count}`} position={[Number(place.latitude), Number(place.longitude)]} icon={markerIcon}>
+              <Popup>
+                <div className="space-y-1">
+                  <strong>{place.label}</strong>
+                  <div className="text-xs text-muted-foreground">{count} moment{count === 1 ? '' : 's'}</div>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MapContainer>
+    </div>
+  );
+}
+
+const mapAttribution = import.meta.env.VITE_MAP_ATTRIBUTION ?? '&copy; OpenStreetMap contributors';
+const mapTileUrl = import.meta.env.VITE_MAP_TILE_URL ?? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 function Logo() {
   return (
@@ -295,13 +458,13 @@ function Timeline({ favoritesOnly = false, archivedOnly = false }: { favoritesOn
      ...(query ? { query } : {}),
     ...(cameraMake ? { cameraMake } : {}),
     ...(lens ? { lens } : {}),
-    ...(from ? { from: new Date(`${from}T00:00:00.000Z`) } : {}),
-    ...(to ? { to: new Date(`${to}T23:59:59.999Z`) } : {}),
+    ...(from ? { from: new Date(`${from}T00:00:00.000Z`).toISOString() } : {}),
+    ...(to ? { to: new Date(`${to}T23:59:59.999Z`).toISOString() } : {}),
     ...(albumId ? { albumId } : {}),
      ...(filter !== 'all' ? { mediaType: filter as 'photo' | 'video' } : {}),
      ...(favoritesOnly ? { favorite: true } : {}),
      ...(archivedOnly ? { archived: true } : {}),
-   }), [archivedOnly, favoritesOnly, filter, query]);
+   }), [albumId, archivedOnly, cameraMake, favoritesOnly, filter, from, lens, query, to]);
   const albumsQuery = useListAlbums();
   const photosQuery = useInfiniteQuery({
     queryKey: getListPhotosQueryKey(params),
@@ -412,10 +575,150 @@ function AlbumDetail() {
   </section>;
 }
 
+function PlaceDetail() {
+  const { id = '' } = useParams<{ id: string }>();
+  const [place, setPlace] = useState<PlaceDetailRecord | null>(null);
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    void fetchJson<PlaceDetailRecord>(`/api/places/${id}`)
+      .then((next) => {
+        if (!active) return;
+        setPlace(next);
+        setPlaceError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setPlaceError('This place could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id]);
+
+  const photoQuery = useInfiniteQuery({
+    queryKey: ['place-photos', id],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => fetch(`/api/places/${id}/photos?limit=18${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`, { signal, credentials: 'same-origin' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Unable to load place photos');
+        return response.json() as Promise<PlacePhotoPage>;
+      }),
+    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined,
+  });
+
+  const photos = useMemo(() => {
+    const seen = new Set<string>();
+    return (photoQuery.data?.pages.flatMap((page) => page.items) ?? []).filter((photo) => {
+      if (seen.has(photo.id)) return false;
+      seen.add(photo.id);
+      return true;
+    });
+  }, [photoQuery.data]);
+
+  if (isLoading) {
+    return <section className="px-5 py-9 md:px-10 md:py-12"><div className="h-12 w-60 animate-pulse rounded bg-muted" /><div className="mt-8 h-[320px] animate-pulse rounded-3xl bg-muted" /></section>;
+  }
+  if (!place || placeError) {
+    return <section className="px-5 py-9 md:px-10 md:py-12"><EmptyState icon={MapPin} title="Place not found" description={placeError ?? 'This location is not available in your library yet.'} action={<Link href="/places" className="rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground">Back to places</Link>} /></section>;
+  }
+
+  return <section className="px-5 py-9 md:px-10 md:py-12">
+    <Link href="/places" className="mb-8 inline-flex items-center gap-2 text-xs font-bold text-muted-foreground hover:text-primary" data-testid="link-back-to-places"><ArrowLeft size={14} />All places</Link>
+    <PageIntro eyebrow={`${place.photoCount} moments`} title={place.label} description={[place.city, place.state, place.country].filter(Boolean).join(', ') || 'Private location cluster'} action={<div className="rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">{place.latitude != null && place.longitude != null ? `${place.latitude.toFixed(4)}°, ${place.longitude.toFixed(4)}°` : 'Coordinates unavailable'}</div>} />
+    <div className="grid gap-6 lg:grid-cols-[1.5fr_.5fr]">
+      <PlaceMap places={[place]} />
+      <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+        <h2 className="font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground">Place details</h2>
+        <dl className="mt-5 space-y-3 text-sm">
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Country</dt><dd className="font-semibold text-primary">{place.country || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">State</dt><dd className="font-semibold text-primary">{place.state || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">City</dt><dd className="font-semibold text-primary">{place.city || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Locality</dt><dd className="font-semibold text-primary">{place.locality || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Place type</dt><dd className="font-semibold text-primary">{place.placeType || 'gps'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Earliest</dt><dd className="font-semibold text-primary">{place.earliestPhotoDate ? fmtDate(place.earliestPhotoDate, 'short') : '—'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Latest</dt><dd className="font-semibold text-primary">{place.latestPhotoDate ? fmtDate(place.latestPhotoDate, 'short') : '—'}</dd></div>
+        </dl>
+      </div>
+    </div>
+
+    <div className="mt-8">
+      <div className="mb-4 flex items-center justify-between"><h2 className="font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground">Moments in this place</h2><span className="text-xs text-muted-foreground">{photos.length} loaded</span></div>
+      {photoQuery.isLoading ? <MediaSkeleton /> : photoQuery.isError ? <ErrorState retry={() => photoQuery.refetch()} /> : photos.length === 0 ? <EmptyState icon={MapPin} title="No moments tagged here" description="This place has no photos yet, or geocoding has not finished processing them." /> : <div className="photo-grid">{photos.map((photo) => <article key={photo.id} className="group relative mb-3 overflow-hidden rounded-2xl bg-muted/30" data-testid={`card-place-photo-${photo.id}`}><button onClick={() => { const index = photos.findIndex((item) => item.id === photo.id); if (index >= 0) window.dispatchEvent(new CustomEvent('open-place-photo', { detail: { index, photoId: photo.id } })); }} className="block w-full text-left"><img src={photo.thumbnailUrl || photo.mediumUrl} alt={photo.filename} className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]" loading="lazy" /><span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-primary/85 to-transparent px-3 pb-3 pt-10 text-[11px] text-primary-foreground">{photo.filename}</span></button></article>)}</div>}
+      {photoQuery.hasNextPage && (
+        <div className="mt-6 text-center">
+          <button onClick={() => void photoQuery.fetchNextPage()} disabled={photoQuery.isFetchingNextPage} className="rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground disabled:opacity-50">{photoQuery.isFetchingNextPage ? 'Loading…' : 'Load more moments'}</button>
+        </div>
+      )}
+    </div>
+  </section>;
+}
+
 function Places() {
   const placesQuery = useListPlaces();
-  const places = placesQuery.data || [];
-  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow="Coordinates & memories" title="Places" description="A mapless, human view of where your camera has wandered." />{placesQuery.isLoading ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse rounded-3xl bg-muted" />)}</div> : placesQuery.isError ? <ErrorState retry={() => placesQuery.refetch()} /> : places.length === 0 ? <EmptyState icon={MapPin} title="No places yet" description="Moments with GPS coordinates will gather here as your archive comes to life." /> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{places.map((place, i) => <article key={place.id} className={cn('group animate-drift overflow-hidden rounded-3xl border border-border bg-card', `stagger-${Math.min(i + 1, 4)}`)} data-testid={`card-place-${place.id}`}><div className="relative aspect-[1.55] overflow-hidden bg-secondary/20">{place.coverUrl ? <img src={place.coverUrl} alt={place.label} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="flex h-full items-center justify-center text-accent/50"><MapPin size={38} strokeWidth={1.2} /></div>}<span className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-primary/65 text-secondary backdrop-blur"><MapPin size={16} /></span></div><div className="p-5"><h2 className="font-serif text-2xl italic text-primary" data-testid={`text-place-label-${place.id}`}>{place.label}</h2><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{place.photoCount} {place.photoCount === 1 ? 'moment' : 'moments'}</span><span className="font-mono text-[10px]">{place.latitude.toFixed(2)}°, {place.longitude.toFixed(2)}°</span></div></div></article>)}</div>}</section>;
+  const { status: geocodingStatus, refresh: refreshGeocodingStatus } = useGeocodingStatus();
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<PlaceSummary[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    if (!search.trim()) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    let active = true;
+    setIsSearching(true);
+    void fetchJson<PlaceSummary[]>(`/api/places/search?q=${encodeURIComponent(search)}`)
+      .then((next) => {
+        if (active) setSearchResults(next);
+      })
+      .catch(() => {
+        if (active) setSearchResults([]);
+      })
+      .finally(() => {
+        if (active) setIsSearching(false);
+      });
+    return () => { active = false; };
+  }, [search]);
+
+  const places = search.trim() ? searchResults : (placesQuery.data || []);
+
+  const runGeocodeBackfill = async () => {
+    await fetch('/api/places/geocode', { method: 'POST', credentials: 'same-origin' });
+    await refreshGeocodingStatus();
+  };
+
+  const retryGeocoding = async () => {
+    await fetch('/api/places/geocode/retry', { method: 'POST', credentials: 'same-origin' });
+    await refreshGeocodingStatus();
+  };
+
+  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow="Coordinates & memories" title="Places" description="A private, human view of where your camera has wandered." />
+    <div className="mb-8 grid gap-4 lg:grid-cols-[1.3fr_.7fr]">
+      <label className="relative block"><Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} type="search" placeholder="Search places by city, region, country, or landmark" className="h-12 w-full rounded-xl border border-border bg-card pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-secondary" data-testid="input-search-places" /></label>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => void runGeocodeBackfill()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground" data-testid="button-backfill-geocoding">Backfill GPS</button>
+        <button onClick={() => void retryGeocoding()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-accent/30 px-3 py-2 text-xs font-bold text-accent" data-testid="button-retry-geocoding">Retry failed</button>
+      </div>
+    </div>
+    <div className="mb-8 grid gap-4 md:grid-cols-3">
+      <div className="rounded-2xl border border-border bg-card p-4"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Places</p><p className="mt-2 text-2xl font-bold text-primary" data-testid="text-places-count">{(placesQuery.data ?? []).length}</p></div>
+      <div className="rounded-2xl border border-border bg-card p-4"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Photos tagged</p><p className="mt-2 text-2xl font-bold text-primary">{places.reduce((sum, place) => sum + place.photoCount, 0)}</p></div>
+      <div className="rounded-2xl border border-border bg-card p-4"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Geocoding</p><p className="mt-2 text-2xl font-bold text-primary">{geocodingStatus ? `${geocodingStatus.completed}/${geocodingStatus.totalJobs || 0}` : '—'}</p></div>
+    </div>
+    {placesQuery.isLoading || isSearching ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse rounded-3xl bg-muted" />)}</div> : placesQuery.isError ? <ErrorState retry={() => placesQuery.refetch()} /> : places.length === 0 ? <EmptyState icon={MapPin} title="No places yet" description="Moments with GPS coordinates will gather here as your archive comes to life." /> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{places.map((place, i) => <article key={place.id} className={cn('group animate-drift overflow-hidden rounded-3xl border border-border bg-card', `stagger-${Math.min(i + 1, 4)}`)} data-testid={`card-place-${place.id}`}><Link href={`/places/${place.id}`} className="block" data-testid={`link-place-${place.id}`}><div className="relative aspect-[1.55] overflow-hidden bg-secondary/20">{place.coverUrl ? <img src={place.coverUrl} alt={place.label} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="flex h-full items-center justify-center text-accent/50"><MapPin size={38} strokeWidth={1.2} /></div>}<span className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-primary/65 text-secondary backdrop-blur"><MapPin size={16} /></span></div><div className="p-5"><h2 className="font-serif text-2xl italic text-primary" data-testid={`text-place-label-${place.id}`}>{place.label}</h2><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{place.photoCount} {place.photoCount === 1 ? 'moment' : 'moments'}</span>{place.latitude != null && place.longitude != null ? <span className="font-mono text-[10px]">{place.latitude.toFixed(2)}°, {place.longitude.toFixed(2)}°</span> : <span className="font-mono text-[10px]">No GPS</span>}</div></div></Link></article>)}</div>}
+    {geocodingStatus && <div className="mt-8 rounded-3xl border border-border bg-card p-5">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h2 className="font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground">Geocoding worker</h2><p className="mt-2 text-sm text-primary">{geocodingStatus.enabled ? `${geocodingStatus.provider} · ${geocodingStatus.providerVersion}` : 'Geocoding disabled'}</p></div><div className="font-mono text-[10px] uppercase text-muted-foreground">{geocodingStatus.queued} queued · {geocodingStatus.processing} processing · {geocodingStatus.failed} failed</div></div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-secondary transition-[width] duration-500" style={{ width: `${Math.min(100, geocodingStatus.percentage)}%` }} /></div>
+    </div>}
+  </section>;
 }
 
 function ImportPage() {

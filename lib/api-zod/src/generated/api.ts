@@ -77,6 +77,11 @@ export const ListPhotosQueryParams = zod.object({
   "month": zod.coerce.number().min(1).max(listPhotosQueryMonthMax).optional(),
   "from": zod.date().optional(),
   "to": zod.date().optional(),
+  "country": zod.coerce.string().optional(),
+  "state": zod.coerce.string().optional(),
+  "city": zod.coerce.string().optional(),
+  "locality": zod.coerce.string().optional(),
+  "place": zod.coerce.string().optional(),
   "latitude": zod.coerce.number().optional(),
   "longitude": zod.coerce.number().optional()
 })
