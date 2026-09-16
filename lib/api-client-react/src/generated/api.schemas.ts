@@ -104,6 +104,7 @@ export interface PhotoPage {
   items: Photo[];
   /** @nullable */
   nextCursor: string | null;
+  hasMore: boolean;
   total: number;
 }
 
@@ -235,6 +236,148 @@ export interface Place {
   coverUrl: string | null;
 }
 
+export type AiFeature = typeof AiFeature[keyof typeof AiFeature];
+
+
+export const AiFeature = {
+  OCR: 'OCR',
+  OBJECT_DETECTION: 'OBJECT_DETECTION',
+  FACE_DETECTION: 'FACE_DETECTION',
+  SCENE_RECOGNITION: 'SCENE_RECOGNITION',
+} as const;
+
+export type AiWorkerStatusStatus = typeof AiWorkerStatusStatus[keyof typeof AiWorkerStatusStatus];
+
+
+export const AiWorkerStatusStatus = {
+  running: 'running',
+  idle: 'idle',
+  stopped: 'stopped',
+  stale: 'stale',
+  unavailable: 'unavailable',
+} as const;
+
+export interface AiWorkerStatus {
+  status: AiWorkerStatusStatus;
+  /** @nullable */
+  lastHeartbeat: string | null;
+  /** @nullable */
+  currentJobId: string | null;
+  /** @nullable */
+  currentFeature: string | null;
+  /** @nullable */
+  currentPhotoId: string | null;
+  /** @nullable */
+  workerVersion: string | null;
+  activeJobs: number;
+  jobsCompleted: number;
+  jobsFailed: number;
+  /** @nullable */
+  processingStartedAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+}
+
+export type AiSettingsProcessingPriority = typeof AiSettingsProcessingPriority[keyof typeof AiSettingsProcessingPriority];
+
+
+export const AiSettingsProcessingPriority = {
+  normal: 'normal',
+  low: 'low',
+} as const;
+
+export type AiSettingsComputeDevice = typeof AiSettingsComputeDevice[keyof typeof AiSettingsComputeDevice];
+
+
+export const AiSettingsComputeDevice = {
+  auto: 'auto',
+  cpu: 'cpu',
+  gpu: 'gpu',
+} as const;
+
+export interface AiSettings {
+  userId: string;
+  processingEnabled: boolean;
+  processingPaused: boolean;
+  ocrEnabled: boolean;
+  objectDetectionEnabled: boolean;
+  faceDetectionEnabled: boolean;
+  sceneRecognitionEnabled: boolean;
+  maxConcurrency: number;
+  processingPriority: AiSettingsProcessingPriority;
+  computeDevice: AiSettingsComputeDevice;
+  /** @nullable */
+  visionModel: string | null;
+  ocrLanguage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AiSettingsPatchProcessingPriority = typeof AiSettingsPatchProcessingPriority[keyof typeof AiSettingsPatchProcessingPriority];
+
+
+export const AiSettingsPatchProcessingPriority = {
+  normal: 'normal',
+  low: 'low',
+} as const;
+
+export type AiSettingsPatchComputeDevice = typeof AiSettingsPatchComputeDevice[keyof typeof AiSettingsPatchComputeDevice];
+
+
+export const AiSettingsPatchComputeDevice = {
+  auto: 'auto',
+  cpu: 'cpu',
+  gpu: 'gpu',
+} as const;
+
+export interface AiSettingsPatch {
+  processingEnabled?: boolean;
+  ocrEnabled?: boolean;
+  objectDetectionEnabled?: boolean;
+  faceDetectionEnabled?: boolean;
+  sceneRecognitionEnabled?: boolean;
+  /**
+     * @minimum 1
+     * @maximum 8
+     */
+  maxConcurrency?: number;
+  processingPriority?: AiSettingsPatchProcessingPriority;
+  computeDevice?: AiSettingsPatchComputeDevice;
+  /** @nullable */
+  visionModel?: string | null;
+  /**
+     * @minLength 2
+     * @maxLength 32
+     */
+  ocrLanguage?: string;
+}
+
+export interface AiProcessingStatus {
+  settings: AiSettings;
+  worker: AiWorkerStatus;
+  totalJobs: number;
+  queued: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  overallProgress: number;
+  /** @nullable */
+  lastProcessedItem: string | null;
+  /** @nullable */
+  lastProcessedAt: string | null;
+  currentModel: string;
+  /** @nullable */
+  lastError: string | null;
+}
+
+export interface AiBackfillResponse {
+  createdJobs: number;
+}
+
+export interface AiRetryResponse {
+  retriedJobs: number;
+}
+
 export type CursorParameter = string;
 
 export type LimitParameter = number;
@@ -247,6 +390,9 @@ cursor?: CursorParameter;
  */
 limit?: LimitParameter;
 query?: string;
+cameraMake?: string;
+cameraModel?: string;
+lens?: string;
 mediaType?: ListPhotosMediaType;
 favorite?: boolean;
 archived?: boolean;
@@ -261,6 +407,8 @@ year?: number;
 month?: number;
 from?: string;
 to?: string;
+latitude?: number;
+longitude?: number;
 };
 
 export type ListPhotosMediaType = typeof ListPhotosMediaType[keyof typeof ListPhotosMediaType];

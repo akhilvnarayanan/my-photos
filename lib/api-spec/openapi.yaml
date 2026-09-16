@@ -14,6 +14,7 @@ tags:
   - name: albums
   - name: imports
   - name: library
+  - name: ai
 paths:
   /healthz:
     get:
@@ -77,6 +78,15 @@ paths:
           name: query
           schema: { type: string }
         - in: query
+          name: cameraMake
+          schema: { type: string }
+        - in: query
+          name: cameraModel
+          schema: { type: string }
+        - in: query
+          name: lens
+          schema: { type: string }
+        - in: query
           name: mediaType
           schema:
             type: string
@@ -111,6 +121,12 @@ paths:
         - in: query
           name: to
           schema: { type: string, format: date }
+        - in: query
+          name: latitude
+          schema: { type: number }
+        - in: query
+          name: longitude
+          schema: { type: number }
       responses:
         "200":
           description: A page of media
@@ -492,6 +508,84 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Place"
+  /ai/status:
+    get:
+      operationId: getAiStatus
+      tags: [ai]
+      summary: Get local AI processing status and settings
+      responses:
+        "200":
+          description: AI processing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiProcessingStatus"
+  /ai/settings:
+    patch:
+      operationId: updateAiSettings
+      tags: [ai]
+      summary: Update local AI processing settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiSettingsPatch"
+      responses:
+        "200":
+          description: Updated AI processing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiProcessingStatus"
+  /ai/backfill:
+    post:
+      operationId: backfillAiJobs
+      tags: [ai]
+      summary: Queue existing photos for enabled local AI features
+      responses:
+        "202":
+          description: Jobs queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiBackfillResponse"
+  /ai/retry-failed:
+    post:
+      operationId: retryFailedAiJobs
+      tags: [ai]
+      summary: Requeue failed local AI jobs
+      responses:
+        "202":
+          description: Failed jobs requeued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiRetryResponse"
+  /ai/pause:
+    post:
+      operationId: pauseAiProcessing
+      tags: [ai]
+      summary: Pause local AI processing
+      responses:
+        "200":
+          description: Paused AI processing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiProcessingStatus"
+  /ai/resume:
+    post:
+      operationId: resumeAiProcessing
+      tags: [ai]
+      summary: Resume local AI processing
+      responses:
+        "200":
+          description: Resumed AI processing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiProcessingStatus"
 components:
   parameters:
     PhotoId:
@@ -607,8 +701,9 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Photo" }
         nextCursor: { type: ["string", "null"] }
+        hasMore: { type: boolean }
         total: { type: number }
-      required: [items, nextCursor, total]
+      required: [items, nextCursor, hasMore, total]
     FavoriteInput:
       type: object
       properties:
@@ -750,3 +845,116 @@ components:
         photoCount: { type: number }
         coverUrl: { type: ["string", "null"] }
       required: [id, label, latitude, longitude, photoCount, coverUrl]
+    AiFeature:
+      type: string
+      enum: [OCR, OBJECT_DETECTION, FACE_DETECTION, SCENE_RECOGNITION]
+    AiWorkerStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [running, idle, stopped, stale, unavailable]
+        lastHeartbeat: { type: ["string", "null"], format: date-time }
+        currentJobId: { type: ["string", "null"] }
+        currentFeature: { type: ["string", "null"] }
+        currentPhotoId: { type: ["string", "null"] }
+        workerVersion: { type: ["string", "null"] }
+        activeJobs: { type: number }
+        jobsCompleted: { type: number }
+        jobsFailed: { type: number }
+        processingStartedAt: { type: ["string", "null"], format: date-time }
+        lastError: { type: ["string", "null"] }
+      required: [status, lastHeartbeat, currentJobId, currentFeature, currentPhotoId, workerVersion, activeJobs, jobsCompleted, jobsFailed, processingStartedAt, lastError]
+    AiSettings:
+      type: object
+      properties:
+        userId: { type: string }
+        processingEnabled: { type: boolean }
+        processingPaused: { type: boolean }
+        ocrEnabled: { type: boolean }
+        objectDetectionEnabled: { type: boolean }
+        faceDetectionEnabled: { type: boolean }
+        sceneRecognitionEnabled: { type: boolean }
+        maxConcurrency: { type: number }
+        processingPriority:
+          type: string
+          enum: [normal, low]
+        computeDevice:
+          type: string
+          enum: [auto, cpu, gpu]
+        visionModel: { type: ["string", "null"] }
+        ocrLanguage: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required:
+        - userId
+        - processingEnabled
+        - processingPaused
+        - ocrEnabled
+        - objectDetectionEnabled
+        - faceDetectionEnabled
+        - sceneRecognitionEnabled
+        - maxConcurrency
+        - processingPriority
+        - computeDevice
+        - visionModel
+        - ocrLanguage
+        - createdAt
+        - updatedAt
+    AiSettingsPatch:
+      type: object
+      properties:
+        processingEnabled: { type: boolean }
+        ocrEnabled: { type: boolean }
+        objectDetectionEnabled: { type: boolean }
+        faceDetectionEnabled: { type: boolean }
+        sceneRecognitionEnabled: { type: boolean }
+        maxConcurrency: { type: number, minimum: 1, maximum: 8 }
+        processingPriority:
+          type: string
+          enum: [normal, low]
+        computeDevice:
+          type: string
+          enum: [auto, cpu, gpu]
+        visionModel: { type: ["string", "null"] }
+        ocrLanguage: { type: string, minLength: 2, maxLength: 32 }
+    AiProcessingStatus:
+      type: object
+      properties:
+        settings:
+          $ref: "#/components/schemas/AiSettings"
+        worker:
+          $ref: "#/components/schemas/AiWorkerStatus"
+        totalJobs: { type: number }
+        queued: { type: number }
+        processing: { type: number }
+        completed: { type: number }
+        failed: { type: number }
+        overallProgress: { type: number }
+        lastProcessedItem: { type: ["string", "null"] }
+        lastProcessedAt: { type: ["string", "null"], format: date-time }
+        currentModel: { type: string }
+        lastError: { type: ["string", "null"] }
+      required:
+        - settings
+        - worker
+        - totalJobs
+        - queued
+        - processing
+        - completed
+        - failed
+        - overallProgress
+        - lastProcessedItem
+        - lastProcessedAt
+        - currentModel
+        - lastError
+    AiBackfillResponse:
+      type: object
+      properties:
+        createdJobs: { type: number }
+      required: [createdJobs]
+    AiRetryResponse:
+      type: object
+      properties:
+        retriedJobs: { type: number }
+      required: [retriedJobs]

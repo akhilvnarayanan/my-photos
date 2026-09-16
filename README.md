@@ -51,6 +51,14 @@ Open `http://localhost:5173`. Set `MY_PHOTOS_USERNAME` and `MY_PHOTOS_PASSWORD` 
 | `BASE_PATH` | Vite preview path; use `/` for the standalone app |
 | `IMPORT_CONCURRENCY` | Maximum importer workers per job; defaults to 2 and is capped at 8 |
 | `MAX_BROWSER_UPLOAD_BYTES` | Maximum size of one streamed browser upload; defaults to 20 GiB |
+| `AI_WORKER_DISABLED` | Disable the local AI queue monitor; defaults to `false` |
+| `AI_WORKER_ONLY` | Run the API bundle as a worker-only process without opening an HTTP port |
+| `AI_WORKER_CONCURRENCY` | Upper bound for simultaneous OCR jobs; defaults to 1 |
+| `AI_WORKER_POLL_MS` | Worker polling interval; defaults to 2000 ms |
+| `AI_OCR_LANGUAGE` | Tesseract language data to use; defaults to `eng` |
+| `AI_OCR_TIMEOUT_MS` | Maximum time for one Tesseract invocation; defaults to 120000 ms |
+| `AI_MAX_ATTEMPTS` | Maximum OCR attempts before a job is marked failed; defaults to 3 |
+| `AI_STALE_JOB_MS` | Time before processing jobs are recovered; defaults to 900000 ms |
 
 ## Importing Google Takeout
 
@@ -82,25 +90,41 @@ PHOTO_STORAGE_PATH/
 
 The API never exposes this directory as a static public folder. Media is delivered only through authenticated photo routes.
 
-## PostgreSQL
+## PostgreSQL and migrations
 
-The current workspace uses Drizzle ORM. Push the development schema after changing `lib/db/src/schema/`:
+The current workspace uses Drizzle ORM with versioned migrations. The Compose `db-migrate` service waits for PostgreSQL health and applies pending migrations before the API or AI worker starts. Existing databases are upgraded additively; photos, OCR rows, and volumes are not reset.
+
+Generate a migration after changing `lib/db/src/schema/`:
 
 ```bash
-pnpm --filter @workspace/db run push
+pnpm --filter @workspace/db run generate
 ```
 
-The main tables are users, sessions, photos, albums, album photos, import jobs, import files, and asset sources. Changes are pushed to the development database without resetting existing records.
+Apply migrations to an existing or fresh database:
+
+```bash
+pnpm --filter @workspace/db run migrate
+```
+
+For Docker deployments, use `docker compose up -d --build`. A fresh database is initialized by the same migration set. The old `push` script remains available for development-only experiments, but is not used by Compose.
+
+The main tables are users, sessions, photos, albums, album photos, import jobs, import files, asset sources, AI jobs/settings, OCR text, and worker status. The timeline uses stable capture-date/ID cursors and targeted user/filter indexes. OCR keeps a simple-token GIN index plus substring compatibility matching.
 
 ## Docker Compose
 
-The included Compose setup runs PostgreSQL, the API, and an nginx-served frontend. PostgreSQL uses a persistent Docker volume, while photo storage is a configurable host bind mount. The API exposes `/api/healthz` for health checks.
+The included Compose setup runs PostgreSQL, the API, a dedicated local OCR worker, and an nginx-served frontend. The API does not run a second worker when Compose is enabled; the worker shares the database and photo-storage bind mount and includes Tesseract plus English language data. PostgreSQL uses a persistent Docker volume, while photo storage is a configurable host bind mount. The API exposes `/api/healthz` for health checks.
 
 ```bash
 docker compose up --build
 ```
 
 Then open `http://localhost:8080` and log in with the values configured in `docker-compose.yml` or an override file.
+
+To verify the local OCR path against a running development API, set the local account variables and run:
+
+```bash
+MY_PHOTOS_USERNAME=owner MY_PHOTOS_PASSWORD=change-me pnpm run test:local-ocr
+```
 
 For a real library, copy `.env.example` to `.env`, replace the example credentials, set `PHOTO_STORAGE_HOST_PATH` to a backed-up host directory, and do not keep 190 GB of originals only inside an ephemeral container layer.
 
@@ -119,6 +143,10 @@ pnpm run typecheck
 pnpm --filter @workspace/api-server run typecheck
 pnpm --filter @workspace/my-photos run typecheck
 ```
+
+The photo list contract supports `cursor`, `nextCursor`, `hasMore`, text search, camera/lens, dates, location, album, media type, favorite, archive, trash, and source filters. The Photos timeline loads additional pages with an intersection observer and keeps each filter set in its own React Query key.
+
+There is currently no committed automated test suite; test infrastructure and deterministic API/frontend coverage are the next required foundation task before expanding search or AI features.
 
 ## Production builds
 
@@ -140,6 +168,10 @@ rsync -a --delete "$PHOTO_STORAGE_PATH/" /backup/my-photos-storage/
 
 After a restart, unfinished scans and imports are detected from the database and resumed. A partial original copy is verified by size and SHA-256 before reuse. The source HDD or Takeout extraction is never changed by recovery.
 
-## Deliberate non-goals
+## Implemented now
+
+Controlled schema migrations, database-backed dedicated-worker heartbeats with stale detection, Docker HTTP health checks, cursor-based timeline pagination, structured photo filters, and local OCR search are implemented.
+
+## Deliberate non-goals and planned future features
 
 The MVP does not upload originals to external cloud services and does not include AI search, face recognition, sharing links, cloud sync, photo editing, stories, or automatic memories.
