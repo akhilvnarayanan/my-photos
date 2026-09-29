@@ -20,7 +20,10 @@ function verifyPassword(password: string, encoded: string) {
 
 export async function ensureDefaultUser() {
   const username = process.env.MY_PHOTOS_USERNAME ?? "owner";
-  const password = process.env.MY_PHOTOS_PASSWORD ?? "change-me";
+  const password = process.env.MY_PHOTOS_PASSWORD;
+  if (!password) {
+    throw new Error("MY_PHOTOS_PASSWORD must be set before signing in");
+  }
   const [existing] = await db.select().from(usersTable).where(eq(usersTable.username, username)).limit(1);
   if (existing) return existing;
   const [user] = await db.insert(usersTable).values({

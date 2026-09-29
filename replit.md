@@ -5,11 +5,13 @@ My Photos is a private, self-hosted Google Takeout photo library with local orig
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- The managed `artifacts/my-photos: web` and `artifacts/api-server: API Server` workflows serve the preview; run `pnpm install --frozen-lockfile` after import and `pnpm --filter @workspace/db run push` to create development tables.
+- Set `MY_PHOTOS_PASSWORD` as a Replit Secret before signing in. `MY_PHOTOS_USERNAME` defaults to `owner`; use `PHOTO_STORAGE_PATH` to choose persistent storage for original photos and thumbnails.
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string (provided by the workspace database), and `MY_PHOTOS_PASSWORD` — private library password
 
 ## Stack
 
