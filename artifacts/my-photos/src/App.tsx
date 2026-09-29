@@ -1,5 +1,8 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { QueryClient, QueryClientProvider, useInfiniteQuery } from '@tanstack/react-query';
+import L from 'leaflet';
+import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   Archive,
   Check,
@@ -39,6 +42,7 @@ import {
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 import {
   getGetImportQueryKey,
+  getGetAiStatusQueryKey,
   getGetPhotoQueryKey,
   getGetSessionQueryKey,
   getGetStatsQueryKey,
@@ -46,6 +50,7 @@ import {
   getListImportsQueryKey,
   getListPhotosQueryKey,
   getDownloadPhotoQueryKey,
+  listPhotos,
   useAddPhotosToAlbum,
   useCancelImport,
   useConfirmImport,
@@ -54,6 +59,7 @@ import {
   useDeletePhoto,
   useDownloadPhoto,
   useGetImport,
+  useGetAiStatus,
   useGetPhoto,
   useGetSession,
   useGetStats,
@@ -76,8 +82,14 @@ import {
   useToggleArchive,
   useUpdateAlbum,
   useHealthCheck,
+  useUpdateAiSettings,
+  useBackfillAiJobs,
+  useRetryFailedAiJobs,
+  usePauseAiProcessing,
+  useResumeAiProcessing,
   type Album,
   type ImportJob,
+  type ListPhotosParams,
   type Photo,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -101,6 +113,166 @@ const fmtBytes = (bytes = 0) => {
   return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 };
 const pct = (job?: ImportJob | null) => job?.totalFiles ? Math.min(100, Math.round((job.processedFiles / job.totalFiles) * 100)) : 0;
+
+type PlaceSummary = {
+  id: string;
+  label: string;
+  country?: string | null;
+  state?: string | null;
+  city?: string | null;
+  locality?: string | null;
+  district?: string | null;
+  landmark?: string | null;
+  placeType?: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  photoCount: number;
+  coverUrl: string | null;
+};
+
+type PlaceDetailRecord = PlaceSummary & {
+  geocodingStatus?: string | null;
+  geocoderProvider?: string | null;
+  geocoderVersion?: string | null;
+  geocodedAt?: string | null;
+  earliestPhotoDate?: string | null;
+  latestPhotoDate?: string | null;
+};
+
+type PlacePhotoPage = {
+  items: Array<{
+    id: string;
+    filename: string;
+    thumbnailUrl: string;
+    mediumUrl: string;
+    originalUrl: string;
+    captureDate: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    isFavorite: boolean;
+  }>;
+  nextCursor: string | null;
+  hasMore: boolean;
+  total: number;
+};
+
+type GeocodingStatusResponse = {
+  provider: string;
+  providerVersion: string;
+  enabled: boolean;
+  totalJobs: number;
+  queued: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  cacheEntries: number;
+  percentage: number;
+};
+
+async function fetchJson<T>(input: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(input, {
+    credentials: 'same-origin',
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed (${response.status}): ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function useGeocodingStatus() {
+  const [status, setStatus] = useState<GeocodingStatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const refresh = async () => {
+    try {
+      setStatus(await fetchJson<GeocodingStatusResponse>('/api/places/geocoding/status'));
+    } catch {
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void refresh();
+    const id = window.setInterval(() => { void refresh(); }, 6000);
+    return () => window.clearInterval(id);
+  }, []);
+  return { status, loading, refresh };
+}
+
+function PlaceMap({ places }: { places: Array<{ id: string; label: string; latitude: number | null; longitude: number | null; photoCount?: number }> }) {
+  const usable = places.filter((place) => place.latitude != null && place.longitude != null);
+  if (usable.length === 0) {
+    return <div className="flex h-[300px] items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">No GPS coordinates available for this place.</div>;
+  }
+
+  const avgLat = usable.reduce((sum, place) => sum + Number(place.latitude), 0) / usable.length;
+  const avgLng = usable.reduce((sum, place) => sum + Number(place.longitude), 0) / usable.length;
+  const clusters = usable.length > 20
+    ? usable.reduce<Map<string, { id: string; label: string; latitude: number; longitude: number; count: number }>>((acc, place) => {
+        const latKey = (Number(place.latitude) * 10).toFixed(0);
+        const lonKey = (Number(place.longitude) * 10).toFixed(0);
+        const key = `${latKey}:${lonKey}`;
+        const existing = acc.get(key);
+        if (existing) {
+          existing.count += 1;
+          existing.latitude = (existing.latitude * (existing.count - 1) + Number(place.latitude)) / existing.count;
+          existing.longitude = (existing.longitude * (existing.count - 1) + Number(place.longitude)) / existing.count;
+        } else {
+          acc.set(key, { id: place.id, label: place.label, latitude: Number(place.latitude), longitude: Number(place.longitude), count: 1 });
+        }
+        return acc;
+      }, new Map()).values()
+    : usable;
+
+  return (
+    <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <style>{`
+        .leaflet-container { height: 320px; width: 100%; background: hsl(var(--background)); }
+        .custom-cluster-marker { background: transparent; border: none; }
+        .custom-cluster-marker div {
+          display: flex; align-items: center; justify-content: center;
+          width: 32px; height: 32px; border-radius: 9999px;
+          background: linear-gradient(135deg, rgba(242, 120, 80, 0.96), rgba(255, 169, 92, 0.96));
+          color: white; font-size: 11px; font-weight: 700; box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+          border: 2px solid rgba(255,255,255,0.75);
+        }
+      `}</style>
+      <MapContainer center={[avgLat, avgLng]} zoom={usable.length > 2 ? 7 : 11} scrollWheelZoom className="h-[320px] w-full" attributionControl>
+        <TileLayer
+          attribution={mapAttribution}
+          url={mapTileUrl}
+        />
+        {[...clusters].map((place) => {
+          const count = 'count' in place ? place.count : 1;
+          const markerIcon = L.divIcon({
+            className: 'custom-cluster-marker',
+            html: `<div>${count}</div>`,
+            iconAnchor: [16, 16],
+            popupAnchor: [0, -12],
+          });
+          return (
+            <Marker key={`${place.id}-${count}`} position={[Number(place.latitude), Number(place.longitude)]} icon={markerIcon}>
+              <Popup>
+                <div className="space-y-1">
+                  <strong>{place.label}</strong>
+                  <div className="text-xs text-muted-foreground">{count} moment{count === 1 ? '' : 's'}</div>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MapContainer>
+    </div>
+  );
+}
+
+const mapAttribution = import.meta.env.VITE_MAP_ATTRIBUTION ?? '&copy; OpenStreetMap contributors';
+const mapTileUrl = import.meta.env.VITE_MAP_TILE_URL ?? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 function Logo() {
   return (
@@ -191,8 +363,8 @@ function PageIntro({ eyebrow, title, description, action }: { eyebrow: string; t
   return <div className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-end"><div><p className="mb-3 font-mono text-[10px] uppercase tracking-[.22em] text-accent" data-testid={`text-eyebrow-${eyebrow.toLowerCase().replaceAll(' ', '-')}`}>{eyebrow}</p><h1 className="font-serif text-4xl italic tracking-tight text-primary md:text-[48px]" data-testid={`heading-${title.toLowerCase().replaceAll(' ', '-')}`}>{title}</h1>{description && <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">{description}</p>}</div>{action}</div>;
 }
 
-function Toolbar({ query, setQuery, filter, setFilter }: { query: string; setQuery: (v: string) => void; filter: string; setFilter: (v: string) => void }) {
-  return <div className="mb-8 flex flex-col gap-3 sm:flex-row"><label className="relative flex-1"><Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search your archive" className="h-12 w-full rounded-xl border border-border bg-card pl-11 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-secondary" data-testid="input-search-photos" /></label><div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1"><button onClick={() => setFilter('all')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-all"><LayoutGrid size={14} />All</button><button onClick={() => setFilter('photo')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'photo' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-photos"><ImageIcon size={14} />Photos</button><button onClick={() => setFilter('video')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'video' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-videos"><Video size={14} />Video</button></div></div>;
+function Toolbar({ query, setQuery, filter, setFilter, cameraMake, setCameraMake, lens, setLens, from, setFrom, to, setTo, albumId, setAlbumId, albums }: { query: string; setQuery: (v: string) => void; filter: string; setFilter: (v: string) => void; cameraMake: string; setCameraMake: (v: string) => void; lens: string; setLens: (v: string) => void; from: string; setFrom: (v: string) => void; to: string; setTo: (v: string) => void; albumId: string; setAlbumId: (v: string) => void; albums: Album[] }) {
+  return <div className="mb-8 space-y-3"><div className="flex flex-col gap-3 sm:flex-row"><label className="relative flex-1"><Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search your archive" className="h-12 w-full rounded-xl border border-border bg-card pl-11 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-secondary" data-testid="input-search-photos" /></label><div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1"><button onClick={() => setFilter('all')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-all"><LayoutGrid size={14} />All</button><button onClick={() => setFilter('photo')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'photo' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-photos"><ImageIcon size={14} />Photos</button><button onClick={() => setFilter('video')} className={cn('flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold', filter === 'video' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-primary')} data-testid="button-filter-videos"><Video size={14} />Video</button></div></div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5"><input value={cameraMake} onChange={(e) => setCameraMake(e.target.value)} placeholder="Camera make" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-camera" /><input value={lens} onChange={(e) => setLens(e.target.value)} placeholder="Lens" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-lens" /><select value={albumId} onChange={(e) => setAlbumId(e.target.value)} className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="select-filter-album"><option value="">All albums</option>{albums.map((album) => <option key={album.id} value={album.id}>{album.name}</option>)}</select><input value={from} onChange={(e) => setFrom(e.target.value)} type="date" aria-label="From date" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-from" /><input value={to} onChange={(e) => setTo(e.target.value)} type="date" aria-label="To date" className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none focus:ring-2 focus:ring-secondary" data-testid="input-filter-to" /></div></div>;
 }
 
 function MediaCard({ photo, onOpen, onFavorite, onArchive, pending, archivePending }: { photo: Photo; onOpen: (photo: Photo) => void; onFavorite: (photo: Photo) => void; onArchive?: (photo: Photo) => void; pending?: boolean; archivePending?: boolean }) {
@@ -274,20 +446,59 @@ function Viewer({ photo, onClose, onFavorite, onArchive, onNext, onPrevious, onD
 function Timeline({ favoritesOnly = false, archivedOnly = false }: { favoritesOnly?: boolean; archivedOnly?: boolean }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [cameraMake, setCameraMake] = useState('');
+  const [lens, setLens] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [albumId, setAlbumId] = useState('');
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [favPending, setFavPending] = useState<string | null>(null);
-   const params = useMemo(() => ({ limit: 100, ...(query ? { query } : {}), ...(filter !== 'all' ? { mediaType: filter as 'photo' | 'video' } : {}), ...(favoritesOnly ? { favorite: true } : {}), ...(archivedOnly ? { archived: true } : {}) }), [archivedOnly, favoritesOnly, filter, query]);
-  const photosQuery = useListPhotos(params);
+   const params = useMemo<ListPhotosParams>(() => ({
+     limit: 100,
+     ...(query ? { query } : {}),
+    ...(cameraMake ? { cameraMake } : {}),
+    ...(lens ? { lens } : {}),
+    ...(from ? { from: new Date(`${from}T00:00:00.000Z`).toISOString() } : {}),
+    ...(to ? { to: new Date(`${to}T23:59:59.999Z`).toISOString() } : {}),
+    ...(albumId ? { albumId } : {}),
+     ...(filter !== 'all' ? { mediaType: filter as 'photo' | 'video' } : {}),
+     ...(favoritesOnly ? { favorite: true } : {}),
+     ...(archivedOnly ? { archived: true } : {}),
+   }), [albumId, archivedOnly, cameraMake, favoritesOnly, filter, from, lens, query, to]);
+  const albumsQuery = useListAlbums();
+  const photosQuery = useInfiniteQuery({
+    queryKey: getListPhotosQueryKey(params),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => listPhotos({ ...params, ...(pageParam ? { cursor: pageParam } : {}) }, { signal }),
+    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined,
+  });
   const toggle = useToggleFavorite();
    const archive = useToggleArchive();
   const deleteMutation = useDeletePhoto();
-  const items = photosQuery.data?.items || [];
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    return (photosQuery.data?.pages.flatMap((page) => page.items) ?? []).filter((photo) => {
+      if (seen.has(photo.id)) return false;
+      seen.add(photo.id);
+      return true;
+    });
+  }, [photosQuery.data]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !photosQuery.hasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !photosQuery.isFetchingNextPage) void photosQuery.fetchNextPage();
+    }, { rootMargin: '600px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [photosQuery.fetchNextPage, photosQuery.hasNextPage, photosQuery.isFetchingNextPage]);
    const favorite = (photo: Photo) => { setFavPending(photo.id); toggle.mutate({ photoId: photo.id, data: { isFavorite: !photo.isFavorite } }, { onSettled: () => setFavPending(null), onSuccess: () => queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey(params) }) }); };
    const toggleArchive = (photo: Photo) => { archive.mutate({ photoId: photo.id, data: { isArchived: !photo.isArchived } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey(params) }); queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey() }); } }); };
    const deletePhoto = (photo: Photo) => { if (window.confirm(`Move “${photo.filename}” to Trash? You can restore it later.`)) deleteMutation.mutate({ photoId: photo.id }, { onSuccess: () => { setViewerIndex(null); queryClient.invalidateQueries({ queryKey: getListPhotosQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() }); } }); };
   const grouped = useMemo(() => items.reduce<Record<string, Photo[]>>((acc, photo) => { const key = new Date(photo.captureDate).getFullYear().toString(); (acc[key] ||= []).push(photo); return acc; }, {}), [items]);
-   return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow={favoritesOnly ? 'A small constellation' : archivedOnly ? 'Set aside, still safe' : 'Your archive'} title={favoritesOnly ? 'Favorites' : archivedOnly ? 'Archive' : 'All moments'} description={favoritesOnly ? 'The photographs you have marked to keep close.' : archivedOnly ? 'Moments tucked away from the main view, still searchable and still part of every album.' : 'A quiet, chronological view of the moments you chose to keep.'} /><Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} />
-     {photosQuery.isLoading ? <MediaSkeleton /> : photosQuery.isError ? <ErrorState retry={() => photosQuery.refetch()} /> : items.length === 0 ? <EmptyState icon={favoritesOnly ? Heart : archivedOnly ? Archive : Camera} title={favoritesOnly ? 'Nothing held close yet' : archivedOnly ? 'Your archive is clear' : query ? 'No matching moments' : 'Your archive is still empty'} description={favoritesOnly ? 'Tap the heart on any photograph to gather your favorites here.' : archivedOnly ? 'Archived moments remain safe and can be brought back whenever you need them.' : query ? 'Try a different filename, place, or date.' : 'Start with a Google Takeout archive and make this space yours.'} action={!favoritesOnly && !archivedOnly && <Link href="/import" className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground" data-testid="link-empty-import"><Upload size={15} />Import your archive</Link>} /> : <>{Object.entries(grouped).sort(([a], [b]) => Number(b) - Number(a)).map(([year, yearItems], groupIndex) => <div key={year} className={cn('animate-drift mb-10', `stagger-${Math.min(groupIndex + 1, 4)}`)}><div className="mb-4 flex items-center gap-4"><h2 className="font-mono text-[11px] font-medium tracking-[.18em] text-muted-foreground" data-testid={`heading-year-${year}`}>{year}</h2><span className="h-px flex-1 bg-border" /><span className="font-mono text-[10px] text-muted-foreground/60">{yearItems.length} {yearItems.length === 1 ? 'moment' : 'moments'}</span></div><div className="photo-grid">{yearItems.map((photo) => <MediaCard key={photo.id} photo={photo} onOpen={() => setViewerIndex(items.findIndex((item) => item.id === photo.id))} onFavorite={favorite} onArchive={toggleArchive} archivePending={archive.isPending && archive.variables?.photoId === photo.id} pending={favPending === photo.id} />)}</div></div>)}</>}
+  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow={favoritesOnly ? 'A small constellation' : archivedOnly ? 'Set aside, still safe' : 'Your archive'} title={favoritesOnly ? 'Favorites' : archivedOnly ? 'Archive' : 'All moments'} description={favoritesOnly ? 'The photographs you have marked to keep close.' : archivedOnly ? 'Moments tucked away from the main view, still searchable and still part of every album.' : 'A quiet, chronological view of the moments you chose to keep.'} /><Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} cameraMake={cameraMake} setCameraMake={setCameraMake} lens={lens} setLens={setLens} from={from} setFrom={setFrom} to={to} setTo={setTo} albumId={albumId} setAlbumId={setAlbumId} albums={albumsQuery.data ?? []} />
+    {photosQuery.isLoading ? <MediaSkeleton /> : photosQuery.isError ? <ErrorState retry={() => photosQuery.refetch()} /> : items.length === 0 ? <EmptyState icon={favoritesOnly ? Heart : archivedOnly ? Archive : Camera} title={favoritesOnly ? 'Nothing held close yet' : archivedOnly ? 'Your archive is clear' : query ? 'No matching moments' : 'Your archive is still empty'} description={favoritesOnly ? 'Tap the heart on any photograph to gather your favorites here.' : archivedOnly ? 'Archived moments remain safe and can be brought back whenever you need them.' : query ? 'Try a different filename, place, or date.' : 'Start with a Google Takeout archive and make this space yours.'} action={!favoritesOnly && !archivedOnly && <Link href="/import" className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground" data-testid="link-empty-import"><Upload size={15} />Import your archive</Link>} /> : <>{Object.entries(grouped).sort(([a], [b]) => Number(b) - Number(a)).map(([year, yearItems], groupIndex) => <div key={year} className={cn('animate-drift mb-10', `stagger-${Math.min(groupIndex + 1, 4)}`)}><div className="mb-4 flex items-center gap-4"><h2 className="font-mono text-[11px] font-medium tracking-[.18em] text-muted-foreground" data-testid={`heading-year-${year}`}>{year}</h2><span className="h-px flex-1 bg-border" /><span className="font-mono text-[10px] text-muted-foreground/60">{yearItems.length} {yearItems.length === 1 ? 'moment' : 'moments'}</span></div><div className="photo-grid">{yearItems.map((photo) => <MediaCard key={photo.id} photo={photo} onOpen={() => setViewerIndex(items.findIndex((item) => item.id === photo.id))} onFavorite={favorite} onArchive={toggleArchive} archivePending={archive.isPending && archive.variables?.photoId === photo.id} pending={favPending === photo.id} />)}</div></div>)}<div ref={loadMoreRef} className="h-12">{photosQuery.isFetchingNextPage && <MediaSkeleton />}</div></>}
      {viewerIndex !== null && items[viewerIndex] && <Viewer photo={items[viewerIndex]} onClose={() => setViewerIndex(null)} onFavorite={favorite} onArchive={toggleArchive} onDelete={deletePhoto} isPending={favPending === items[viewerIndex].id} onPrevious={() => setViewerIndex((viewerIndex - 1 + items.length) % items.length)} onNext={() => setViewerIndex((viewerIndex + 1) % items.length)} />}
    </section>;
 }
@@ -364,10 +575,150 @@ function AlbumDetail() {
   </section>;
 }
 
+function PlaceDetail() {
+  const { id = '' } = useParams<{ id: string }>();
+  const [place, setPlace] = useState<PlaceDetailRecord | null>(null);
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    void fetchJson<PlaceDetailRecord>(`/api/places/${id}`)
+      .then((next) => {
+        if (!active) return;
+        setPlace(next);
+        setPlaceError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setPlaceError('This place could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id]);
+
+  const photoQuery = useInfiniteQuery({
+    queryKey: ['place-photos', id],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => fetch(`/api/places/${id}/photos?limit=18${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`, { signal, credentials: 'same-origin' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Unable to load place photos');
+        return response.json() as Promise<PlacePhotoPage>;
+      }),
+    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined,
+  });
+
+  const photos = useMemo(() => {
+    const seen = new Set<string>();
+    return (photoQuery.data?.pages.flatMap((page) => page.items) ?? []).filter((photo) => {
+      if (seen.has(photo.id)) return false;
+      seen.add(photo.id);
+      return true;
+    });
+  }, [photoQuery.data]);
+
+  if (isLoading) {
+    return <section className="px-5 py-9 md:px-10 md:py-12"><div className="h-12 w-60 animate-pulse rounded bg-muted" /><div className="mt-8 h-[320px] animate-pulse rounded-3xl bg-muted" /></section>;
+  }
+  if (!place || placeError) {
+    return <section className="px-5 py-9 md:px-10 md:py-12"><EmptyState icon={MapPin} title="Place not found" description={placeError ?? 'This location is not available in your library yet.'} action={<Link href="/places" className="rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground">Back to places</Link>} /></section>;
+  }
+
+  return <section className="px-5 py-9 md:px-10 md:py-12">
+    <Link href="/places" className="mb-8 inline-flex items-center gap-2 text-xs font-bold text-muted-foreground hover:text-primary" data-testid="link-back-to-places"><ArrowLeft size={14} />All places</Link>
+    <PageIntro eyebrow={`${place.photoCount} moments`} title={place.label} description={[place.city, place.state, place.country].filter(Boolean).join(', ') || 'Private location cluster'} action={<div className="rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">{place.latitude != null && place.longitude != null ? `${place.latitude.toFixed(4)}°, ${place.longitude.toFixed(4)}°` : 'Coordinates unavailable'}</div>} />
+    <div className="grid gap-6 lg:grid-cols-[1.5fr_.5fr]">
+      <PlaceMap places={[place]} />
+      <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+        <h2 className="font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground">Place details</h2>
+        <dl className="mt-5 space-y-3 text-sm">
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Country</dt><dd className="font-semibold text-primary">{place.country || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">State</dt><dd className="font-semibold text-primary">{place.state || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">City</dt><dd className="font-semibold text-primary">{place.city || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Locality</dt><dd className="font-semibold text-primary">{place.locality || 'Unknown'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Place type</dt><dd className="font-semibold text-primary">{place.placeType || 'gps'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Earliest</dt><dd className="font-semibold text-primary">{place.earliestPhotoDate ? fmtDate(place.earliestPhotoDate, 'short') : '—'}</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Latest</dt><dd className="font-semibold text-primary">{place.latestPhotoDate ? fmtDate(place.latestPhotoDate, 'short') : '—'}</dd></div>
+        </dl>
+      </div>
+    </div>
+
+    <div className="mt-8">
+      <div className="mb-4 flex items-center justify-between"><h2 className="font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground">Moments in this place</h2><span className="text-xs text-muted-foreground">{photos.length} loaded</span></div>
+      {photoQuery.isLoading ? <MediaSkeleton /> : photoQuery.isError ? <ErrorState retry={() => photoQuery.refetch()} /> : photos.length === 0 ? <EmptyState icon={MapPin} title="No moments tagged here" description="This place has no photos yet, or geocoding has not finished processing them." /> : <div className="photo-grid">{photos.map((photo) => <article key={photo.id} className="group relative mb-3 overflow-hidden rounded-2xl bg-muted/30" data-testid={`card-place-photo-${photo.id}`}><button onClick={() => { const index = photos.findIndex((item) => item.id === photo.id); if (index >= 0) window.dispatchEvent(new CustomEvent('open-place-photo', { detail: { index, photoId: photo.id } })); }} className="block w-full text-left"><img src={photo.thumbnailUrl || photo.mediumUrl} alt={photo.filename} className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]" loading="lazy" /><span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-primary/85 to-transparent px-3 pb-3 pt-10 text-[11px] text-primary-foreground">{photo.filename}</span></button></article>)}</div>}
+      {photoQuery.hasNextPage && (
+        <div className="mt-6 text-center">
+          <button onClick={() => void photoQuery.fetchNextPage()} disabled={photoQuery.isFetchingNextPage} className="rounded-xl bg-primary px-4 py-3 text-xs font-bold text-primary-foreground disabled:opacity-50">{photoQuery.isFetchingNextPage ? 'Loading…' : 'Load more moments'}</button>
+        </div>
+      )}
+    </div>
+  </section>;
+}
+
 function Places() {
   const placesQuery = useListPlaces();
-  const places = placesQuery.data || [];
-  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow="Coordinates & memories" title="Places" description="A mapless, human view of where your camera has wandered." />{placesQuery.isLoading ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse rounded-3xl bg-muted" />)}</div> : placesQuery.isError ? <ErrorState retry={() => placesQuery.refetch()} /> : places.length === 0 ? <EmptyState icon={MapPin} title="No places yet" description="Moments with GPS coordinates will gather here as your archive comes to life." /> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{places.map((place, i) => <article key={place.id} className={cn('group animate-drift overflow-hidden rounded-3xl border border-border bg-card', `stagger-${Math.min(i + 1, 4)}`)} data-testid={`card-place-${place.id}`}><div className="relative aspect-[1.55] overflow-hidden bg-secondary/20">{place.coverUrl ? <img src={place.coverUrl} alt={place.label} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="flex h-full items-center justify-center text-accent/50"><MapPin size={38} strokeWidth={1.2} /></div>}<span className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-primary/65 text-secondary backdrop-blur"><MapPin size={16} /></span></div><div className="p-5"><h2 className="font-serif text-2xl italic text-primary" data-testid={`text-place-label-${place.id}`}>{place.label}</h2><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{place.photoCount} {place.photoCount === 1 ? 'moment' : 'moments'}</span><span className="font-mono text-[10px]">{place.latitude.toFixed(2)}°, {place.longitude.toFixed(2)}°</span></div></div></article>)}</div>}</section>;
+  const { status: geocodingStatus, refresh: refreshGeocodingStatus } = useGeocodingStatus();
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<PlaceSummary[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    if (!search.trim()) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    let active = true;
+    setIsSearching(true);
+    void fetchJson<PlaceSummary[]>(`/api/places/search?q=${encodeURIComponent(search)}`)
+      .then((next) => {
+        if (active) setSearchResults(next);
+      })
+      .catch(() => {
+        if (active) setSearchResults([]);
+      })
+      .finally(() => {
+        if (active) setIsSearching(false);
+      });
+    return () => { active = false; };
+  }, [search]);
+
+  const places = search.trim() ? searchResults : (placesQuery.data || []);
+
+  const runGeocodeBackfill = async () => {
+    await fetch('/api/places/geocode', { method: 'POST', credentials: 'same-origin' });
+    await refreshGeocodingStatus();
+  };
+
+  const retryGeocoding = async () => {
+    await fetch('/api/places/geocode/retry', { method: 'POST', credentials: 'same-origin' });
+    await refreshGeocodingStatus();
+  };
+
+  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow="Coordinates & memories" title="Places" description="A private, human view of where your camera has wandered." />
+    <div className="mb-8 grid gap-4 lg:grid-cols-[1.3fr_.7fr]">
+      <label className="relative block"><Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} type="search" placeholder="Search places by city, region, country, or landmark" className="h-12 w-full rounded-xl border border-border bg-card pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-secondary" data-testid="input-search-places" /></label>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => void runGeocodeBackfill()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground" data-testid="button-backfill-geocoding">Backfill GPS</button>
+        <button onClick={() => void retryGeocoding()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-accent/30 px-3 py-2 text-xs font-bold text-accent" data-testid="button-retry-geocoding">Retry failed</button>
+      </div>
+    </div>
+    <div className="mb-8 grid gap-4 md:grid-cols-3">
+      <div className="rounded-2xl border border-border bg-card p-4"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Places</p><p className="mt-2 text-2xl font-bold text-primary" data-testid="text-places-count">{(placesQuery.data ?? []).length}</p></div>
+      <div className="rounded-2xl border border-border bg-card p-4"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Photos tagged</p><p className="mt-2 text-2xl font-bold text-primary">{places.reduce((sum, place) => sum + place.photoCount, 0)}</p></div>
+      <div className="rounded-2xl border border-border bg-card p-4"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Geocoding</p><p className="mt-2 text-2xl font-bold text-primary">{geocodingStatus ? `${geocodingStatus.completed}/${geocodingStatus.totalJobs || 0}` : '—'}</p></div>
+    </div>
+    {placesQuery.isLoading || isSearching ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[1, 2, 3].map((i) => <div key={i} className="h-52 animate-pulse rounded-3xl bg-muted" />)}</div> : placesQuery.isError ? <ErrorState retry={() => placesQuery.refetch()} /> : places.length === 0 ? <EmptyState icon={MapPin} title="No places yet" description="Moments with GPS coordinates will gather here as your archive comes to life." /> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{places.map((place, i) => <article key={place.id} className={cn('group animate-drift overflow-hidden rounded-3xl border border-border bg-card', `stagger-${Math.min(i + 1, 4)}`)} data-testid={`card-place-${place.id}`}><Link href={`/places/${place.id}`} className="block" data-testid={`link-place-${place.id}`}><div className="relative aspect-[1.55] overflow-hidden bg-secondary/20">{place.coverUrl ? <img src={place.coverUrl} alt={place.label} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="flex h-full items-center justify-center text-accent/50"><MapPin size={38} strokeWidth={1.2} /></div>}<span className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-primary/65 text-secondary backdrop-blur"><MapPin size={16} /></span></div><div className="p-5"><h2 className="font-serif text-2xl italic text-primary" data-testid={`text-place-label-${place.id}`}>{place.label}</h2><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{place.photoCount} {place.photoCount === 1 ? 'moment' : 'moments'}</span>{place.latitude != null && place.longitude != null ? <span className="font-mono text-[10px]">{place.latitude.toFixed(2)}°, {place.longitude.toFixed(2)}°</span> : <span className="font-mono text-[10px]">No GPS</span>}</div></div></Link></article>)}</div>}
+    {geocodingStatus && <div className="mt-8 rounded-3xl border border-border bg-card p-5">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h2 className="font-mono text-[10px] uppercase tracking-[.2em] text-muted-foreground">Geocoding worker</h2><p className="mt-2 text-sm text-primary">{geocodingStatus.enabled ? `${geocodingStatus.provider} · ${geocodingStatus.providerVersion}` : 'Geocoding disabled'}</p></div><div className="font-mono text-[10px] uppercase text-muted-foreground">{geocodingStatus.queued} queued · {geocodingStatus.processing} processing · {geocodingStatus.failed} failed</div></div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-secondary transition-[width] duration-500" style={{ width: `${Math.min(100, geocodingStatus.percentage)}%` }} /></div>
+    </div>}
+  </section>;
 }
 
 function ImportPage() {
@@ -467,13 +818,55 @@ function SettingsPage() {
   const statsQuery = useGetStats();
   const sessionQuery = useGetSession();
   const health = useHealthCheck();
+  const aiQuery = useGetAiStatus({ query: { refetchInterval: 3000, queryKey: getGetAiStatusQueryKey() } });
+  const updateAi = useUpdateAiSettings();
+  const backfill = useBackfillAiJobs();
+  const retryFailed = useRetryFailedAiJobs();
+  const pauseAi = usePauseAiProcessing();
+  const resumeAi = useResumeAiProcessing();
   const stats = statsQuery.data;
+  const ai = aiQuery.data;
+  const aiSettings = ai?.settings;
   const [autoOrganize, setAutoOrganize] = useState(true);
   const [rememberView, setRememberView] = useState(true);
-  return <section className="px-5 py-9 md:px-10 md:py-12"><PageIntro eyebrow="The quiet details" title="Settings" description="A few preferences for how your private library feels and behaves." /><div className="grid gap-6 lg:grid-cols-[1fr_1fr]"><div className="rounded-3xl border border-border bg-card p-6 md:p-8"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/30 text-accent"><Settings size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library preferences</h2></div><SettingRow label="Auto-organize imports" description="Group new moments by year after scanning." checked={autoOrganize} onChange={setAutoOrganize} testId="switch-auto-organize" /><SettingRow label="Remember last view" description="Open the library where you left it." checked={rememberView} onChange={setRememberView} testId="switch-remember-view" /><div className="mt-7 border-t border-border pt-6"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Signed in as</p><p className="mt-2 text-sm font-semibold text-primary" data-testid="text-settings-username">{sessionQuery.data?.username || 'local owner'}</p><div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><span className={cn('h-2 w-2 rounded-full', health.data?.status === 'ok' ? 'bg-chart-3' : 'bg-secondary')} />Library service {health.data?.status === 'ok' ? 'healthy' : 'connected'}</div></div></div><div className="rounded-3xl border border-border bg-card p-6 md:p-8"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent"><HardDrive size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library at a glance</h2></div>{statsQuery.isLoading ? <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7">{[1, 2, 3, 4].map((i) => <div key={i} className="h-12 animate-pulse rounded bg-muted" />)}</div> : statsQuery.isError ? <div className="mt-7"><ErrorState retry={() => statsQuery.refetch()} /></div> : <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7"><Stat label="Photographs" value={(stats?.totalPhotos || 0).toLocaleString()} /><Stat label="Videos" value={(stats?.totalVideos || 0).toLocaleString()} /><Stat label="Total files" value={(stats?.totalFiles || 0).toLocaleString()} /><Stat label="Favorites" value={(stats?.favoriteCount || 0).toLocaleString()} /><Stat label="Storage used" value={fmtBytes(stats?.totalStorageBytes)} /><Stat label="Duplicates skipped" value={(stats?.duplicateFiles || 0).toLocaleString()} /></div>}<div className="mt-8 border-t border-border pt-5"><p className="text-xs text-muted-foreground">Latest capture</p><p className="mt-1 font-serif text-lg italic text-primary" data-testid="text-latest-capture">{fmtDate(stats?.latestCaptureDate, 'short')}</p></div></div></div><div className="mt-6 rounded-2xl border border-secondary/30 bg-secondary/10 p-5"><div className="flex gap-3"><KeyRound className="mt-0.5 shrink-0 text-accent" size={17} /><div><h3 className="text-sm font-bold text-primary">Local password protection</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your account and library live on the same private server. There is no cloud account to sync or recover.</p></div></div></div></section>;
+  const refreshAi = () => queryClient.invalidateQueries({ queryKey: getGetAiStatusQueryKey() });
+  const patchAi = (data: Parameters<typeof updateAi.mutate>[0]['data']) => updateAi.mutate({ data }, { onSuccess: refreshAi });
+  const queueExisting = () => backfill.mutate(undefined, { onSuccess: refreshAi });
+  const retryExisting = () => retryFailed.mutate(undefined, { onSuccess: refreshAi });
+  const toggleProcessing = (checked: boolean) => patchAi({ processingEnabled: checked });
+  const toggleFeature = (key: 'ocrEnabled' | 'objectDetectionEnabled' | 'faceDetectionEnabled' | 'sceneRecognitionEnabled', checked: boolean) => patchAi({ [key]: checked });
+  return <section className="px-5 py-9 md:px-10 md:py-12">
+    <PageIntro eyebrow="The quiet details" title="Settings" description="A few preferences for how your private library feels and behaves." />
+    <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+      <div className="rounded-3xl border border-border bg-card p-6 md:p-8">
+        <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/30 text-accent"><Settings size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library preferences</h2></div>
+        <SettingRow label="Auto-organize imports" description="Group new moments by year after scanning." checked={autoOrganize} onChange={setAutoOrganize} testId="switch-auto-organize" />
+        <SettingRow label="Remember last view" description="Open the library where you left it." checked={rememberView} onChange={setRememberView} testId="switch-remember-view" />
+        <div className="mt-7 border-t border-border pt-6"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Signed in as</p><p className="mt-2 text-sm font-semibold text-primary" data-testid="text-settings-username">{sessionQuery.data?.username || 'local owner'}</p><div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><span className={cn('h-2 w-2 rounded-full', health.data?.status === 'ok' ? 'bg-chart-3' : 'bg-secondary')} />Library service {health.data?.status === 'ok' ? 'healthy' : 'connected'}</div></div>
+      </div>
+      <div className="rounded-3xl border border-border bg-card p-6 md:p-8">
+        <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent"><HardDrive size={18} /></span><h2 className="font-serif text-2xl italic text-primary">Library at a glance</h2></div>
+        {statsQuery.isLoading ? <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7">{[1, 2, 3, 4].map((i) => <div key={i} className="h-12 animate-pulse rounded bg-muted" />)}</div> : statsQuery.isError ? <div className="mt-7"><ErrorState retry={() => statsQuery.refetch()} /></div> : <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-7"><Stat label="Photographs" value={(stats?.totalPhotos || 0).toLocaleString()} /><Stat label="Videos" value={(stats?.totalVideos || 0).toLocaleString()} /><Stat label="Total files" value={(stats?.totalFiles || 0).toLocaleString()} /><Stat label="Favorites" value={(stats?.favoriteCount || 0).toLocaleString()} /><Stat label="Storage used" value={fmtBytes(stats?.totalStorageBytes)} /><Stat label="Duplicates skipped" value={(stats?.duplicateFiles || 0).toLocaleString()} /></div>}
+        <div className="mt-8 border-t border-border pt-5"><p className="text-xs text-muted-foreground">Latest capture</p><p className="mt-1 font-serif text-lg italic text-primary" data-testid="text-latest-capture">{fmtDate(stats?.latestCaptureDate, 'short')}</p></div>
+      </div>
+    </div>
+    <div className="mt-6 rounded-3xl border border-border bg-card p-6 md:p-8">
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-start"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/30 text-accent"><Sparkles size={18} /></span><div><h2 className="font-serif text-2xl italic text-primary">AI processing</h2><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Local-only processing queue. Originals never leave this server.</p></div></div>{aiSettings && <div className="flex flex-wrap gap-2"><button onClick={queueExisting} disabled={backfill.isPending || !aiSettings.processingEnabled} className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground disabled:opacity-40" data-testid="button-process-existing-photos">{backfill.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}Process existing photos</button><button onClick={retryExisting} disabled={retryFailed.isPending || ai.failed === 0} className="inline-flex items-center gap-2 rounded-xl border border-accent/30 px-3 py-2 text-xs font-bold text-accent disabled:opacity-40" data-testid="button-retry-ai-failed">{retryFailed.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <CircleAlert size={14} />}Retry failed</button>{aiSettings.processingPaused ? <button onClick={() => resumeAi.mutate(undefined, { onSuccess: refreshAi })} disabled={resumeAi.isPending} className="inline-flex items-center gap-2 rounded-xl bg-secondary px-3 py-2 text-xs font-bold text-primary disabled:opacity-40" data-testid="button-resume-ai"><Play size={14} />Resume processing</button> : <button onClick={() => pauseAi.mutate(undefined, { onSuccess: refreshAi })} disabled={pauseAi.isPending} className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-bold text-primary disabled:opacity-40" data-testid="button-pause-ai"><Pause size={14} />Pause processing</button>}</div>}</div>
+       {aiQuery.isLoading ? <div className="mt-7 h-40 animate-pulse rounded-2xl bg-muted" /> : aiQuery.isError ? <div className="mt-7"><ErrorState retry={() => aiQuery.refetch()} /></div> : ai && aiSettings && <>
+         <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><AiStat label="Total jobs" value={ai.totalJobs} /><AiStat label="Queued" value={ai.queued} /><AiStat label="Processing" value={ai.processing} /><AiStat label="Completed" value={ai.completed} /><AiStat label="Failed" value={ai.failed} /></div>
+         <div className="mt-7"><div className="flex items-center justify-between gap-4 text-xs"><span className="font-semibold text-primary">Overall progress</span><span className="font-mono text-muted-foreground">{ai.overallProgress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-secondary transition-[width] duration-500" style={{ width: `${ai.overallProgress}%` }} /></div></div>
+         <div className="mt-7 grid gap-6 lg:grid-cols-2">
+           <div><SettingRow label="AI processing enabled" description="Allow enabled local features to create and process jobs." checked={aiSettings.processingEnabled} onChange={toggleProcessing} testId="switch-ai-processing" /><SettingRow label="OCR" description="Run local Tesseract text recognition for photos. Originals are never modified." checked={aiSettings.ocrEnabled} onChange={(checked) => toggleFeature('ocrEnabled', checked)} testId="switch-ai-ocr" /><SettingRow label="Object detection" description="Prepare local object tags for a later processing phase." checked={aiSettings.objectDetectionEnabled} onChange={(checked) => toggleFeature('objectDetectionEnabled', checked)} testId="switch-ai-objects" /><SettingRow label="Face detection" description="Detect anonymous faces without automatic identity matching." checked={aiSettings.faceDetectionEnabled} onChange={(checked) => toggleFeature('faceDetectionEnabled', checked)} testId="switch-ai-faces" /><SettingRow label="Scene recognition" description="Optional local scene classification, planned for a later phase." checked={aiSettings.sceneRecognitionEnabled} onChange={(checked) => toggleFeature('sceneRecognitionEnabled', checked)} testId="switch-ai-scenes" /></div>
+           <div className="rounded-2xl border border-border bg-background p-5"><p className="font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground">Worker status</p><div className="mt-3 flex items-center gap-2 text-sm font-bold text-primary"><span className={cn('h-2.5 w-2.5 rounded-full', ai.worker.status === 'running' ? 'bg-chart-3' : ai.worker.status === 'unavailable' ? 'bg-destructive' : 'bg-accent')} />{ai.worker.status}</div><dl className="mt-5 space-y-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Current model</dt><dd className="text-right font-semibold text-primary">{ai.currentModel}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Active jobs</dt><dd className="text-right font-semibold text-primary">{ai.worker.activeJobs}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Last processed item</dt><dd className="max-w-[60%] truncate text-right font-semibold text-primary">{ai.lastProcessedItem || 'Not yet'}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Heartbeat</dt><dd className="text-right font-semibold text-primary">{ai.worker.lastHeartbeat ? fmtDate(ai.worker.lastHeartbeat, 'short') : 'Not available'}</dd></div></dl>{(ai.lastError || ai.worker.lastError) && <p className="mt-5 rounded-xl bg-destructive/10 p-3 text-xs leading-relaxed text-destructive">{ai.lastError || ai.worker.lastError}</p>}<p className="mt-5 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">OCR runs locally through Tesseract. Jobs are durable, retryable, and searchable without sending photos or text to external services.</p></div>
+         </div>
+       </>}
+    </div>
+    <div className="mt-6 rounded-2xl border border-secondary/30 bg-secondary/10 p-5"><div className="flex gap-3"><KeyRound className="mt-0.5 shrink-0 text-accent" size={17} /><div><h3 className="text-sm font-bold text-primary">Local password protection</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your account and library live on the same private server. There is no cloud account to sync or recover.</p></div></div></div>
+  </section>;
 }
 
 function SettingRow({ label, description, checked, onChange, testId }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void; testId: string }) { return <label className="mt-7 flex cursor-pointer items-start justify-between gap-4"><span><span className="block text-sm font-bold text-primary">{label}</span><span className="mt-1 block max-w-sm text-xs leading-relaxed text-muted-foreground">{description}</span></span><button type="button" onClick={() => onChange(!checked)} className={cn('relative mt-1 h-6 w-11 shrink-0 rounded-full transition-colors', checked ? 'bg-secondary' : 'bg-muted')} data-testid={testId} aria-pressed={checked}><span className={cn('absolute top-1 h-4 w-4 rounded-full bg-primary transition-transform', checked ? 'translate-x-6' : 'translate-x-1')} /></button></label>; }
+function AiStat({ label, value }: { label: string; value: number }) { return <div className="rounded-2xl border border-border bg-background p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-bold text-primary">{value.toLocaleString()}</p></div>; }
 
 function Login() {
   const [, setLocation] = useLocation();

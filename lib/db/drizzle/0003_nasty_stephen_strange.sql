@@ -1,0 +1,1 @@
+CREATE INDEX "photo_text_search_idx" ON "photo_text" USING gin (to_tsvector('simple', coalesce("text", '')));

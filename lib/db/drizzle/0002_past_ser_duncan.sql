@@ -1,0 +1,1 @@
+ALTER TABLE "ai_worker_status" ADD COLUMN "worker_role" text DEFAULT 'api' NOT NULL;

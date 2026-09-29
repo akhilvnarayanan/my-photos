@@ -16,6 +16,8 @@ import {
 } from "@workspace/db";
 import { logger } from "./logger";
 import { storageRoot } from "./media";
+import { enqueueAiJobsForPhoto } from "./ai-jobs";
+import { ensureGeocodingForPhoto } from "./geocoding";
 
 const execFileAsync = promisify(execFile);
 const IMAGE_EXTENSIONS = new Set([
@@ -555,6 +557,10 @@ async function processImportFile(jobId: string, file: typeof importFilesTable.$i
         sourceHash: digest,
       }).onConflictDoNothing();
       await attachAlbums(current.userId, inserted.id, albumNames);
+      await enqueueAiJobsForPhoto(current.userId, inserted.id);
+      if (inserted.latitude != null && inserted.longitude != null) {
+        await ensureGeocodingForPhoto(current.userId, inserted.id);
+      }
       await db.update(importFilesTable).set({ destinationPath: inserted.originalPath, sourceHash: digest, status: "completed", processedAt: new Date() }).where(eq(importFilesTable.id, file.id));
       await updateProgress(jobId, {
         processedFiles: sql`${importJobsTable.processedFiles} + 1`,

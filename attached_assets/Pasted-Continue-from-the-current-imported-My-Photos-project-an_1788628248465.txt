@@ -1,0 +1,149 @@
+Continue from the current imported My Photos project and DO NOT restart or redo Phase 1.
+
+The existing Phase 1 AI foundation is already present:
+- ai_jobs
+- ai_settings
+- AI API routes
+- AI processing dashboard
+- backfill
+- retry failed
+- pause/resume
+- worker status/heartbeat
+
+The next task is PHASE 2: implement the ACTUAL LOCAL OCR WORKER.
+
+Do not replace the existing architecture.
+Do not reset the project.
+Do not discard the current work.
+Do not create a second AI architecture.
+
+Keep all existing functionality intact, including:
+- Photos/timeline
+- Albums
+- Places
+- Favorites
+- Archive
+- Trash
+- Upload
+- Google Takeout/local imports
+- Video playback
+- EXIF metadata
+- Duplicate detection
+- Authentication
+
+Implement the real local OCR pipeline using Tesseract.
+
+Required flow:
+
+Photo imported
+    ↓
+AI OCR job created
+    ↓
+AI worker claims queued job
+    ↓
+Tesseract runs locally
+    ↓
+OCR result saved to photo_text
+    ↓
+job becomes completed
+    ↓
+OCR text becomes searchable
+
+IMPORTANT:
+
+The current ai-worker.ts appears to be only a heartbeat/status monitor. Replace/extend it so it actually processes queued OCR jobs.
+
+OCR MUST run locally.
+
+Do NOT use:
+- OpenAI
+- Gemini
+- Google Cloud Vision
+- AWS Rekognition
+- Azure OCR
+- any external OCR API
+
+Use Tesseract inside the local Docker environment.
+
+Implement:
+
+1. Reliable PostgreSQL job claiming
+2. queued → processing → completed lifecycle
+3. Retry handling
+4. Maximum retry attempts
+5. Stale processing-job recovery
+6. Pause/resume
+7. Configurable worker concurrency
+8. OCR timeout
+9. Duplicate-result prevention
+10. Batch processing
+11. Automatic OCR job creation for newly imported photos
+12. Existing-photo backfill
+13. Retry failed jobs
+14. Real worker heartbeat/status
+15. OCR progress in the existing dashboard
+16. OCR text persistence
+17. OCR search integration
+18. Per-user authorization
+19. Video skipping
+20. Temporary-file cleanup
+21. Docker/Tesseract installation
+22. Documentation
+23. Automated tests
+24. Real end-to-end OCR test
+
+Default configuration:
+
+AI_WORKER_CONCURRENCY=1
+AI_WORKER_POLL_MS=2000
+AI_OCR_LANGUAGE=eng
+AI_OCR_TIMEOUT_MS=120000
+
+Do not process videos with OCR.
+
+Do not modify original photographs.
+
+Support JPEG, PNG and WebP at minimum. If HEIC/HEIF requires conversion, use a temporary local file and delete it afterward.
+
+For OCR with no detected text, mark the job completed rather than repeatedly retrying it.
+
+The existing Settings → AI Processing UI must display REAL database/worker status, not simulated progress.
+
+After implementation, actually test:
+
+1. Start the application.
+2. Login.
+3. Process existing photos.
+4. Confirm jobs are created.
+5. Confirm the worker claims jobs.
+6. Confirm jobs move from queued → processing → completed.
+7. Confirm actual OCR text is stored.
+8. Search for text from a test image.
+9. Confirm the image appears in search.
+10. Test a failed/corrupt image.
+11. Test retry.
+12. Restart the worker and verify recovery.
+
+Do not consider the task complete merely because TypeScript/Docker builds successfully.
+
+The acceptance criterion is a REAL photograph containing text being processed by local Tesseract and the extracted text being searchable in My Photos.
+
+Do not push to main.
+
+Create a feature commit only after the implementation and end-to-end test succeed.
+
+Commit message:
+
+feat: implement local OCR processing worker
+
+At the end, report:
+- what was implemented
+- files changed
+- database changes
+- Docker changes
+- environment variables
+- tests performed
+- actual OCR end-to-end result
+- known limitations
+
+Proceed with Phase 2 from the current project state.

@@ -1,6 +1,6 @@
 FROM node:24-alpine
 
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg tesseract-ocr tesseract-ocr-data-eng
 RUN corepack enable
 WORKDIR /app
 
@@ -15,4 +15,4 @@ ENV NODE_ENV=production
 ENV PHOTO_STORAGE_PATH=/photos
 EXPOSE 8080
 
-CMD ["sh", "-c", "pnpm --filter @workspace/db run push && pnpm --filter @workspace/api-server run dev"]
+CMD ["pnpm", "--filter", "@workspace/api-server", "run", "dev"]

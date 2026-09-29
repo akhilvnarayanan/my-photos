@@ -11,5 +11,6 @@ export interface PhotoPage {
   items: Photo[];
   /** @nullable */
   nextCursor: string | null;
+  hasMore: boolean;
   total: number;
 }
